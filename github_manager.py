@@ -239,12 +239,9 @@ class GitHubManager(QWidget):
             QMessageBox.warning(self, "Error", "Repo and token required.")
             self.save_config()
             return
-        # Only strip trailing .git and slashes, never alter dashes or valid chars
-        repo_url = repo.strip()
-        if repo_url.endswith('.git'):
-            repo_url = repo_url[:-4]
-        repo_url = repo_url.rstrip('/')
-        url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
+        # Use the repo field as-is for the remote URL
+        url = f"https://{token}:x-oauth-basic@github.com/{repo}"
+        self.log(f"[DEBUG] Using remote URL: {url}")
         # Initialize repo if needed
         if not os.path.exists(".git"):
             self.run_git(["init"])
