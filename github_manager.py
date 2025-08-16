@@ -84,6 +84,7 @@ class GitHubManager(QWidget):
                 pass
 
     def init_ui(self):
+        from PyQt5.QtWidgets import QTextEdit
         layout = QVBoxLayout()
         self.token_input = QLineEdit()
         self.token_input.setPlaceholderText("Enter your GitHub Personal Access Token")
@@ -106,6 +107,12 @@ class GitHubManager(QWidget):
         self.branch_btn = QPushButton("Create & Switch Branch")
         self.branch_btn.clicked.connect(self.create_branch)
         layout.addWidget(self.branch_btn)
+        # Log window at the bottom
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setFixedHeight(120)
+        layout.addWidget(QLabel("Log:"))
+        layout.addWidget(self.log_box)
         self.setLayout(layout)
 
     def load_config(self):
@@ -129,6 +136,9 @@ class GitHubManager(QWidget):
         with open(CONFIG_FILE, "w") as f:
             json.dump(data, f)
 
+    def log(self, msg):
+        self.log_box.append(msg)
+
     def create_repo(self):
         token = self.token_input.text().strip()
         repo = self.repo_input.text().strip()
@@ -141,7 +151,12 @@ class GitHubManager(QWidget):
             return
         # Create new repo
         name = os.path.basename(os.getcwd())
-        resp = requests.post(f"{GITHUB_API}/user/repos", json={"name": name}, headers={"Authorization": f"token {token}"})
+        url = f"{GITHUB_API}/user/repos"
+        payload = {"name": name}
+        headers = {"Authorization": f"token {token}"}
+        self.log(f"[POST] {url}\nPayload: {payload}\nHeaders: {{'Authorization': 'token ...'}}")
+        resp = requests.post(url, json=payload, headers=headers)
+        self.log(f"[RESPONSE] {resp.status_code} {resp.text}")
         if resp.status_code == 201:
             QMessageBox.information(self, "Success", f"Created repo: {name}")
             self.repo_input.setText(f"{resp.json()['owner']['login']}/{name}")
@@ -160,15 +175,23 @@ class GitHubManager(QWidget):
             return
         url = f"https://{token}:x-oauth-basic@github.com/{repo}.git"
         if not os.path.exists(".git"):
-            subprocess.run([self.git_path, "init"])
-            subprocess.run([self.git_path, "add", "."])
-            subprocess.run([self.git_path, "commit", "-m", "Initial commit"])
-            subprocess.run([self.git_path, "branch", "-M", "main"])
-            subprocess.run([self.git_path, "remote", "add", "origin", url])
+            self.log("[GIT] git init")
+            self.log(subprocess.run([self.git_path, "init"], capture_output=True, text=True).stdout)
+            self.log("[GIT] git add .")
+            self.log(subprocess.run([self.git_path, "add", "."], capture_output=True, text=True).stdout)
+            self.log("[GIT] git commit -m 'Initial commit'")
+            self.log(subprocess.run([self.git_path, "commit", "-m", "Initial commit"], capture_output=True, text=True).stdout)
+            self.log("[GIT] git branch -M main")
+            self.log(subprocess.run([self.git_path, "branch", "-M", "main"], capture_output=True, text=True).stdout)
+            self.log(f"[GIT] git remote add origin {url}")
+            self.log(subprocess.run([self.git_path, "remote", "add", "origin", url], capture_output=True, text=True).stdout)
         else:
-            subprocess.run([self.git_path, "add", "."])
-            subprocess.run([self.git_path, "commit", "-m", "Update"])
-        subprocess.run([self.git_path, "push", "-u", "origin", "main"])
+            self.log("[GIT] git add .")
+            self.log(subprocess.run([self.git_path, "add", "."], capture_output=True, text=True).stdout)
+            self.log("[GIT] git commit -m 'Update'")
+            self.log(subprocess.run([self.git_path, "commit", "-m", "Update"], capture_output=True, text=True).stdout)
+        self.log("[GIT] git push -u origin main")
+        self.log(subprocess.run([self.git_path, "push", "-u", "origin", "main"], capture_output=True, text=True).stdout)
         self.save_config()
         QMessageBox.information(self, "Success", "Pushed to GitHub.")
 
@@ -179,7 +202,8 @@ class GitHubManager(QWidget):
             QMessageBox.warning(self, "Error", "Branch name required.")
             self.save_config()
             return
-        subprocess.run([self.git_path, "checkout", "-b", branch])
+        self.log(f"[GIT] git checkout -b {branch}")
+        self.log(subprocess.run([self.git_path, "checkout", "-b", branch], capture_output=True, text=True).stdout)
         self.save_config()
         QMessageBox.information(self, "Success", f"Switched to branch: {branch}")
 
