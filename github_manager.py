@@ -18,6 +18,23 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "github_manager_config.jso
 import subprocess
 
 class GitHubManager(QWidget):
+    def run_git(self, args, log_prefix="[GIT]"):
+        """
+        Run a git command, log both stdout and stderr, and return (stdout, stderr, returncode).
+        """
+        self.log(f"{log_prefix} {' '.join(args)}")
+        try:
+            result = subprocess.run([self.git_path] + args, capture_output=True, text=True)
+            if result.stdout:
+                self.log(f"[stdout] {result.stdout.strip()}")
+            if result.stderr:
+                self.log(f"[stderr] {result.stderr.strip()}")
+            if result.returncode != 0:
+                self.log(f"[error] Command failed with code {result.returncode}")
+            return result.stdout, result.stderr, result.returncode
+        except Exception as e:
+            self.log(f"[exception] {e}")
+            return "", str(e), 1
     def ensure_git_identity(self):
         # Check if user.name and user.email are set, prompt if not, and set them
         import subprocess
@@ -170,30 +187,40 @@ class GitHubManager(QWidget):
         repo = self.repo_input.text().strip()
         token = self.token_input.text().strip()
         if not repo or not token:
+            self.log("[error] Repo and token required.")
             QMessageBox.warning(self, "Error", "Repo and token required.")
             self.save_config()
             return
         url = f"https://{token}:x-oauth-basic@github.com/{repo}.git"
+        # Initialize repo if needed
         if not os.path.exists(".git"):
-            self.log("[GIT] git init")
-            self.log(subprocess.run([self.git_path, "init"], capture_output=True, text=True).stdout)
-            self.log("[GIT] git add .")
-            self.log(subprocess.run([self.git_path, "add", "."], capture_output=True, text=True).stdout)
-            self.log("[GIT] git commit -m 'Initial commit'")
-            self.log(subprocess.run([self.git_path, "commit", "-m", "Initial commit"], capture_output=True, text=True).stdout)
-            self.log("[GIT] git branch -M main")
-            self.log(subprocess.run([self.git_path, "branch", "-M", "main"], capture_output=True, text=True).stdout)
-            self.log(f"[GIT] git remote add origin {url}")
-            self.log(subprocess.run([self.git_path, "remote", "add", "origin", url], capture_output=True, text=True).stdout)
+            self.run_git(["init"])
+            self.run_git(["add", "."])
+            self.run_git(["commit", "-m", "Initial commit"])
+            self.run_git(["branch", "-M", "main"])
+            # Check if remote already exists
+            out, err, code = self.run_git(["remote"], log_prefix="[GIT-CHK]")
+            if "origin" not in out:
+                self.run_git(["remote", "add", "origin", url])
+            else:
+                self.log("[info] Remote 'origin' already exists, skipping add.")
         else:
-            self.log("[GIT] git add .")
-            self.log(subprocess.run([self.git_path, "add", "."], capture_output=True, text=True).stdout)
-            self.log("[GIT] git commit -m 'Update'")
-            self.log(subprocess.run([self.git_path, "commit", "-m", "Update"], capture_output=True, text=True).stdout)
-        self.log("[GIT] git push -u origin main")
-        self.log(subprocess.run([self.git_path, "push", "-u", "origin", "main"], capture_output=True, text=True).stdout)
+            self.run_git(["add", "."])
+            # Only commit if there are staged changes
+            out, err, code = self.run_git(["diff", "--cached", "--name-only"], log_prefix="[GIT-CHK]")
+            if out.strip():
+                self.run_git(["commit", "-m", "Update"])
+            else:
+                self.log("[info] No changes to commit.")
+        # Push and log all output
+        out, err, code = self.run_git(["push", "-u", "origin", "main"])
+        if code == 0:
+            self.log("[success] Pushed to GitHub.")
+            QMessageBox.information(self, "Success", "Pushed to GitHub.")
+        else:
+            self.log("[error] Push failed. See log above.")
+            QMessageBox.warning(self, "Error", "Push failed. See log for details.")
         self.save_config()
-        QMessageBox.information(self, "Success", "Pushed to GitHub.")
 
     def create_branch(self):
         self.ensure_git_identity()
