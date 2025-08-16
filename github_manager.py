@@ -1,3 +1,4 @@
+import keyring
 
 """
 github_manager.py: Simple CLI/GUI tool to upload, update, and branch your project on GitHub.
@@ -167,16 +168,23 @@ class GitHubManager(QWidget):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                    self.token_input.setText(data.get("token", ""))
+                    # Token is now stored in keyring, not config file
                     self.repo_input.setText(data.get("repo", ""))
             except Exception:
                 pass
+        # Load token from keyring
+        token = keyring.get_password("github_manager", "token")
+        if token:
+            self.token_input.setText(token)
         # Always save config after loading to persist any new changes
         self.save_config()
 
     def save_config(self):
+        # Save token securely in keyring
+        token = self.token_input.text().strip()
+        if token:
+            keyring.set_password("github_manager", "token", token)
         data = {
-            "token": self.token_input.text().strip(),
             "repo": self.repo_input.text().strip(),
             "git_path": self.git_path or ""
         }
