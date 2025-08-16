@@ -1,7 +1,8 @@
+
 """
 github_manager.py: Simple CLI/GUI tool to upload, update, and branch your project on GitHub.
-- Requires: git, requests, PyQt5 (for GUI)
-- Usage: Run and follow prompts to authenticate, create repo, push, pull, and branch.
+Requires: git, requests, PyQt5 (for GUI)
+Usage: Run and follow prompts to authenticate, create repo, push, pull, and branch.
 """
 import os
 import subprocess
@@ -11,33 +12,12 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushBut
 
 GITHUB_API = "https://api.github.com"
 
-
 import json
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "github_manager_config.json")
 
-import subprocess
-
 class GitHubManager(QWidget):
-    def run_git(self, args, log_prefix="[GIT]"):
-        """
-        Run a git command, log both stdout and stderr, and return (stdout, stderr, returncode).
-        """
-        self.log(f"{log_prefix} {' '.join(args)}")
-        try:
-            result = subprocess.run([self.git_path] + args, capture_output=True, text=True)
-            if result.stdout:
-                self.log(f"[stdout] {result.stdout.strip()}")
-            if result.stderr:
-                self.log(f"[stderr] {result.stderr.strip()}")
-            if result.returncode != 0:
-                self.log(f"[error] Command failed with code {result.returncode}")
-            return result.stdout, result.stderr, result.returncode
-        except Exception as e:
-            self.log(f"[exception] {e}")
-            return "", str(e), 1
     def ensure_git_identity(self):
         # Check if user.name and user.email are set, prompt if not, and set them
-        import subprocess
         name = email = None
         try:
             name = subprocess.check_output([self.git_path, "config", "--get", "user.name"], encoding="utf-8").strip()
@@ -57,6 +37,7 @@ class GitHubManager(QWidget):
             email, ok = QInputDialog.getText(self, "Git User Email", "Enter your email for git commits:")
             if ok and email:
                 subprocess.run([self.git_path, "config", "--global", "user.email", email])
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GitHub Project Uploader/Manager")
@@ -67,7 +48,6 @@ class GitHubManager(QWidget):
         config_file = os.path.join(os.path.dirname(__file__), "github_manager_config.json")
         if os.path.exists(config_file):
             try:
-                import json
                 with open(config_file, "r") as f:
                     data = json.load(f)
                     config_git = data.get("git_path")
@@ -182,6 +162,24 @@ class GitHubManager(QWidget):
             QMessageBox.warning(self, "Error", f"Failed to create repo: {resp.text}")
             self.save_config()
 
+    def run_git(self, args, log_prefix="[GIT]"):
+        """
+        Run a git command, log both stdout and stderr, and return (stdout, stderr, returncode).
+        """
+        self.log(f"{log_prefix} {' '.join(args)}")
+        try:
+            result = subprocess.run([self.git_path] + args, capture_output=True, text=True)
+            if result.stdout:
+                self.log(f"[stdout] {result.stdout.strip()}")
+            if result.stderr:
+                self.log(f"[stderr] {result.stderr.strip()}")
+            if result.returncode != 0:
+                self.log(f"[error] Command failed with code {result.returncode}")
+            return result.stdout, result.stderr, result.returncode
+        except Exception as e:
+            self.log(f"[exception] {e}")
+            return "", str(e), 1
+
     def push_repo(self):
         self.ensure_git_identity()
         repo = self.repo_input.text().strip()
@@ -191,17 +189,9 @@ class GitHubManager(QWidget):
             QMessageBox.warning(self, "Error", "Repo and token required.")
             self.save_config()
             return
-        # Only append .git if not already present
-        # Remove any trailing slashes before appending .git
-        repo_clean = repo.rstrip('/')
-        if repo_clean.endswith('.git'):
-            repo_url = repo_clean
-        else:
-            repo_url = repo_clean + '.git'
-        # Ensure the final URL never ends with a slash
+        # Remove any trailing slashes from repo input and use as-is (do not append .git)
+        repo_url = repo.rstrip('/')
         url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
-        if url.endswith('/'):
-            url = url.rstrip('/')
         # Initialize repo if needed
         if not os.path.exists(".git"):
             self.run_git(["init"])
