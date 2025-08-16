@@ -191,7 +191,12 @@ class GitHubManager(QWidget):
             QMessageBox.warning(self, "Error", "Repo and token required.")
             self.save_config()
             return
-        url = f"https://{token}:x-oauth-basic@github.com/{repo}.git"
+        # Only append .git if not already present
+        if repo.endswith('.git'):
+            repo_url = repo
+        else:
+            repo_url = repo + '.git'
+        url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
         # Initialize repo if needed
         if not os.path.exists(".git"):
             self.run_git(["init"])
