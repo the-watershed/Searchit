@@ -190,9 +190,11 @@ class GitHubManager(QWidget):
             self.save_config()
             return
         # Remove any trailing slashes and .git from repo input
+        # Remove any trailing slashes and .git from repo input
         repo_url = repo.rstrip('/')
         if repo_url.endswith('.git'):
             repo_url = repo_url[:-4]
+        repo_url = repo_url.rstrip('/')
         url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
         # Initialize repo if needed
         if not os.path.exists(".git"):
