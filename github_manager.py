@@ -1,0 +1,190 @@
+"""
+github_manager.py: Simple CLI/GUI tool to upload, update, and branch your project on GitHub.
+- Requires: git, requests, PyQt5 (for GUI)
+- Usage: Run and follow prompts to authenticate, create repo, push, pull, and branch.
+"""
+import os
+import subprocess
+import sys
+import requests
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox
+
+GITHUB_API = "https://api.github.com"
+
+
+import json
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "github_manager_config.json")
+
+import subprocess
+
+class GitHubManager(QWidget):
+    def ensure_git_identity(self):
+        # Check if user.name and user.email are set, prompt if not, and set them
+        import subprocess
+        name = email = None
+        try:
+            name = subprocess.check_output([self.git_path, "config", "--get", "user.name"], encoding="utf-8").strip()
+        except Exception:
+            pass
+        try:
+            email = subprocess.check_output([self.git_path, "config", "--get", "user.email"], encoding="utf-8").strip()
+        except Exception:
+            pass
+        if not name:
+            from PyQt5.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "Git User Name", "Enter your name for git commits:")
+            if ok and name:
+                subprocess.run([self.git_path, "config", "--global", "user.name", name])
+        if not email:
+            from PyQt5.QtWidgets import QInputDialog
+            email, ok = QInputDialog.getText(self, "Git User Email", "Enter your email for git commits:")
+            if ok and email:
+                subprocess.run([self.git_path, "config", "--global", "user.email", email])
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("GitHub Project Uploader/Manager")
+        self.setGeometry(200, 200, 500, 300)
+        # Find git.exe via Windows registry, fallback to config
+        self.git_path = None
+        config_git = None
+        config_file = os.path.join(os.path.dirname(__file__), "github_manager_config.json")
+        if os.path.exists(config_file):
+            try:
+                import json
+                with open(config_file, "r") as f:
+                    data = json.load(f)
+                    config_git = data.get("git_path")
+            except Exception:
+                pass
+        if config_git and os.path.exists(config_git):
+            self.git_path = config_git
+        else:
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\GitForWindows") as key:
+                    install_path, _ = winreg.QueryValueEx(key, "InstallPath")
+                    candidate = os.path.join(install_path, "cmd", "git.exe")
+                    if os.path.exists(candidate):
+                        self.git_path = candidate
+            except Exception:
+                pass
+        if not self.git_path:
+            QMessageBox.critical(self, "Git Not Found", "Git is not installed or not found in the registry. Please install Git for Windows from https://git-scm.com/download/win and restart this program.")
+            self.setDisabled(True)
+            return
+        self.init_ui()
+        self.load_config()
+        # Auto-detect GitHub username if not set
+        if not self.repo_input.text().strip():
+            try:
+                username = subprocess.check_output([self.git_path, "config", "--get", "user.name"], encoding="utf-8").strip()
+                if username:
+                    self.repo_input.setText(f"{username}/")
+            except Exception:
+                pass
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        self.token_input = QLineEdit()
+        self.token_input.setPlaceholderText("Enter your GitHub Personal Access Token")
+        layout.addWidget(QLabel("GitHub Token:"))
+        layout.addWidget(self.token_input)
+        self.repo_input = QLineEdit()
+        self.repo_input.setPlaceholderText("username/repo (leave blank to create new)")
+        layout.addWidget(QLabel("Repository (owner/repo):"))
+        layout.addWidget(self.repo_input)
+        self.create_btn = QPushButton("Create New Repo on GitHub")
+        self.create_btn.clicked.connect(self.create_repo)
+        layout.addWidget(self.create_btn)
+        self.push_btn = QPushButton("Push Local Project to GitHub")
+        self.push_btn.clicked.connect(self.push_repo)
+        layout.addWidget(self.push_btn)
+        self.branch_input = QLineEdit()
+        self.branch_input.setPlaceholderText("branch-name")
+        layout.addWidget(QLabel("Branch Name (for new branch):"))
+        layout.addWidget(self.branch_input)
+        self.branch_btn = QPushButton("Create & Switch Branch")
+        self.branch_btn.clicked.connect(self.create_branch)
+        layout.addWidget(self.branch_btn)
+        self.setLayout(layout)
+
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    data = json.load(f)
+                    self.token_input.setText(data.get("token", ""))
+                    self.repo_input.setText(data.get("repo", ""))
+            except Exception:
+                pass
+        # Always save config after loading to persist any new changes
+        self.save_config()
+
+    def save_config(self):
+        data = {
+            "token": self.token_input.text().strip(),
+            "repo": self.repo_input.text().strip(),
+            "git_path": self.git_path or ""
+        }
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f)
+
+    def create_repo(self):
+        token = self.token_input.text().strip()
+        repo = self.repo_input.text().strip()
+        if not token:
+            QMessageBox.warning(self, "Error", "GitHub token required.")
+            return
+        if repo:
+            QMessageBox.information(self, "Info", "Repo already exists. Use push to update.")
+            self.save_config()
+            return
+        # Create new repo
+        name = os.path.basename(os.getcwd())
+        resp = requests.post(f"{GITHUB_API}/user/repos", json={"name": name}, headers={"Authorization": f"token {token}"})
+        if resp.status_code == 201:
+            QMessageBox.information(self, "Success", f"Created repo: {name}")
+            self.repo_input.setText(f"{resp.json()['owner']['login']}/{name}")
+            self.save_config()
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to create repo: {resp.text}")
+            self.save_config()
+
+    def push_repo(self):
+        self.ensure_git_identity()
+        repo = self.repo_input.text().strip()
+        token = self.token_input.text().strip()
+        if not repo or not token:
+            QMessageBox.warning(self, "Error", "Repo and token required.")
+            self.save_config()
+            return
+        url = f"https://{token}:x-oauth-basic@github.com/{repo}.git"
+        if not os.path.exists(".git"):
+            subprocess.run([self.git_path, "init"])
+            subprocess.run([self.git_path, "add", "."])
+            subprocess.run([self.git_path, "commit", "-m", "Initial commit"])
+            subprocess.run([self.git_path, "branch", "-M", "main"])
+            subprocess.run([self.git_path, "remote", "add", "origin", url])
+        else:
+            subprocess.run([self.git_path, "add", "."])
+            subprocess.run([self.git_path, "commit", "-m", "Update"])
+        subprocess.run([self.git_path, "push", "-u", "origin", "main"])
+        self.save_config()
+        QMessageBox.information(self, "Success", "Pushed to GitHub.")
+
+    def create_branch(self):
+        self.ensure_git_identity()
+        branch = self.branch_input.text().strip()
+        if not branch:
+            QMessageBox.warning(self, "Error", "Branch name required.")
+            self.save_config()
+            return
+        subprocess.run([self.git_path, "checkout", "-b", branch])
+        self.save_config()
+        QMessageBox.information(self, "Success", f"Switched to branch: {branch}")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = GitHubManager()
+    win.show()
+    sys.exit(app.exec_())
