@@ -198,7 +198,10 @@ class GitHubManager(QWidget):
             repo_url = repo_clean
         else:
             repo_url = repo_clean + '.git'
+        # Ensure the final URL never ends with a slash
         url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
+        if url.endswith('/'):
+            url = url.rstrip('/')
         # Initialize repo if needed
         if not os.path.exists(".git"):
             self.run_git(["init"])
