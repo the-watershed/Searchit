@@ -248,12 +248,6 @@ class GitHubManager(QWidget):
             self.run_git(["add", "."])
             self.run_git(["commit", "-m", "Initial commit"])
             self.run_git(["branch", "-M", "main"])
-            # Check if remote already exists
-            out, err, code = self.run_git(["remote"], log_prefix="[GIT-CHK]")
-            if "origin" not in out:
-                self.run_git(["remote", "add", "origin", url])
-            else:
-                self.log("[info] Remote 'origin' already exists, skipping add.")
         else:
             self.run_git(["add", "."])
             # Only commit if there are staged changes
@@ -262,6 +256,9 @@ class GitHubManager(QWidget):
                 self.run_git(["commit", "-m", "Update"])
             else:
                 self.log("[info] No changes to commit.")
+        # Always set the remote URL to what the user entered
+        self.run_git(["remote", "remove", "origin"], log_prefix="[GIT-CHK]")  # Remove if exists (ignore error)
+        self.run_git(["remote", "add", "origin", url], log_prefix="[GIT-CHK]")
         # Push and log all output
         out, err, code = self.run_git(["push", "-u", "origin", "main"])
         if code == 0:
