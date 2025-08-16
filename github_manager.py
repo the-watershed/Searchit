@@ -239,14 +239,11 @@ class GitHubManager(QWidget):
             QMessageBox.warning(self, "Error", "Repo and token required.")
             self.save_config()
             return
-        # Remove any trailing slashes and .git from repo input
-        # Remove any trailing .git, /, or .git/ from repo input
+        # Only strip trailing .git and slashes, never alter dashes or valid chars
         repo_url = repo.strip()
-        while repo_url.endswith('/') or repo_url.endswith('.git'):
-            if repo_url.endswith('/'):
-                repo_url = repo_url[:-1]
-            if repo_url.endswith('.git'):
-                repo_url = repo_url[:-4]
+        if repo_url.endswith('.git'):
+            repo_url = repo_url[:-4]
+        repo_url = repo_url.rstrip('/')
         url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
         # Initialize repo if needed
         if not os.path.exists(".git"):
