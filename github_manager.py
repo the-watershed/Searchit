@@ -192,10 +192,12 @@ class GitHubManager(QWidget):
             self.save_config()
             return
         # Only append .git if not already present
-        if repo.endswith('.git'):
-            repo_url = repo
+        # Remove any trailing slashes before appending .git
+        repo_clean = repo.rstrip('/')
+        if repo_clean.endswith('.git'):
+            repo_url = repo_clean
         else:
-            repo_url = repo + '.git'
+            repo_url = repo_clean + '.git'
         url = f"https://{token}:x-oauth-basic@github.com/{repo_url}"
         # Initialize repo if needed
         if not os.path.exists(".git"):
