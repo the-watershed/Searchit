@@ -8,14 +8,38 @@ import os
 import subprocess
 import sys
 import requests
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QLineEdit, QFileDialog, QMessageBox, QDialog, QFormLayout
 
 GITHUB_API = "https://api.github.com"
 
 import json
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "github_manager_config.json")
 
+class SettingsDialog(QDialog):
+    def __init__(self, parent, token, username, email):
+        super().__init__(parent)
+        self.setWindowTitle("GitHub Settings")
+        self.setModal(True)
+        layout = QFormLayout()
+        self.token_input = QLineEdit(token)
+        self.username_input = QLineEdit(username)
+        self.email_input = QLineEdit(email)
+        layout.addRow("GitHub Token:", self.token_input)
+        layout.addRow("Git Username:", self.username_input)
+        layout.addRow("Git Email:", self.email_input)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.clicked.connect(self.accept)
+        layout.addWidget(self.save_btn)
+        self.setLayout(layout)
+
+    def get_values(self):
+        return (
+            self.token_input.text().strip(),
+            self.username_input.text().strip(),
+            self.email_input.text().strip(),
+        )
 class GitHubManager(QWidget):
+
     def ensure_git_identity(self):
         # Check if user.name and user.email are set, prompt if not, and set them
         name = email = None
@@ -104,6 +128,9 @@ class GitHubManager(QWidget):
         self.branch_btn = QPushButton("Create & Switch Branch")
         self.branch_btn.clicked.connect(self.create_branch)
         layout.addWidget(self.branch_btn)
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.clicked.connect(self.open_settings)
+        layout.addWidget(self.settings_btn)
         # Log window at the bottom
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
@@ -111,6 +138,29 @@ class GitHubManager(QWidget):
         layout.addWidget(QLabel("Log:"))
         layout.addWidget(self.log_box)
         self.setLayout(layout)
+
+    def open_settings(self):
+        # Get current values
+        token = self.token_input.text().strip()
+        # Try to get git username/email from config or git
+        try:
+            username = subprocess.check_output([self.git_path, "config", "--get", "user.name"], encoding="utf-8").strip()
+        except Exception:
+            username = ""
+        try:
+            email = subprocess.check_output([self.git_path, "config", "--get", "user.email"], encoding="utf-8").strip()
+        except Exception:
+            email = ""
+        dlg = SettingsDialog(self, token, username, email)
+        if dlg.exec_():
+            new_token, new_username, new_email = dlg.get_values()
+            self.token_input.setText(new_token)
+            # Save to git config if changed
+            if new_username:
+                subprocess.run([self.git_path, "config", "--global", "user.name", new_username])
+            if new_email:
+                subprocess.run([self.git_path, "config", "--global", "user.email", new_email])
+            self.save_config()
 
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
