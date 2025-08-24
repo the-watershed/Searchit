@@ -1,0 +1,41 @@
+# Configuration files with potentially sensitive data
+config.json
+github_manager_config.json
+
+# Secure storage directory
+.searchit/
+
+# Database files
+*.db
+provenance.db
+searchit_catalog.db
+
+# Log files
+*.log
+error.log
+startup_error.log
+trace.log
+out.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+_tmp_*
+*.tmp
+
+# Environment files
+.env
+.env.local
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

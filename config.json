@@ -1,0 +1,28 @@
+{
+  "theme": {
+    "window": "#f8f3e7",
+    "base": "#d3d1cc",
+    "alt_base": "#efe7d6",
+    "text": "#3b2f2f",
+    "button_bg": "#8b5e34",
+    "button_fg": "#f7efe4",
+    "button_border": "#6f482a",
+    "button_hover_bg": "#a66f3c",
+    "button_disabled_bg": "#cbb79a",
+    "button_disabled_fg": "#7a6a58",
+    "highlight_bg": "#c49a6c",
+    "highlight_fg": "#2b1e1e",
+    "separator_bg": "#d8c6a1",
+    "pane_border": "#bda77b",
+    "tab_bg": "#e9dfc8",
+    "tab_selected_bg": "#fffdf7",
+    "header_bg": "#d8c6a1",
+    "header_fg": "#2b1e1e",
+    "gridline": "#bda77b",
+    "tooltip_bg": "#fffdf7",
+    "tooltip_fg": "#2b1e1e",
+    "tooltip_border": "#bda77b",
+    "input_bg": "#fffdf7",
+    "input_border": "#b8996f"
+  }
+}
