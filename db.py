@@ -513,7 +513,10 @@ class DB:
         items = []
         for row in c.fetchall():
             item_id = row[0]
-            history = self.get_revision_history(item_id)
+            # Use already fetched price data instead of calling get_price_range
+            prc_low, prc_med, prc_hi = row[10], row[11], row[12]
+            
+            # Only fetch revision history when specifically needed, not in bulk operations
             items.append(
                 {
                     'id': item_id,
@@ -526,10 +529,9 @@ class DB:
                     'description': row[7] or '',
                     'condition': row[8] or '',
                     'provenance_notes': row[9] or '',
-                    'prc_low': row[10],
-                    'prc_med': row[11],
-                    'prc_hi': row[12],
-                    'history': history,
+                    'prc_low': prc_low or 0.0,
+                    'prc_med': prc_med or 0.0,
+                    'prc_hi': prc_hi or 0.0,
                 }
             )
         return items
@@ -666,9 +668,182 @@ class DB:
         return c.fetchall()
 
     def get_analytics(self):
+        """Legacy method - kept for backwards compatibility."""
         c = self.conn.cursor()
         c.execute("SELECT COUNT(*), AVG(LENGTH(notes)) FROM items")
         count, avg_notes = c.fetchone()
         c.execute("SELECT AVG(CAST(price AS FLOAT)) FROM prices")
         avg_price = c.fetchone()[0]
         return f"Total items: {count}\nAvg notes length: {avg_notes}\nAvg price: {avg_price}"
+
+    def get_comprehensive_analytics(self):
+        """Get comprehensive analytics data for the enhanced analytics page."""
+        c = self.conn.cursor()
+        analytics = {}
+        
+        try:
+            # Collection Overview
+            c.execute("SELECT COUNT(*) FROM items")
+            analytics['total_items'] = c.fetchone()[0]
+            
+            c.execute("SELECT COUNT(*) FROM images")
+            analytics['total_images'] = c.fetchone()[0]
+            
+            c.execute("SELECT COUNT(*) FROM prices")
+            analytics['total_price_entries'] = c.fetchone()[0]
+            
+            c.execute("SELECT COUNT(*) FROM revisions")
+            analytics['total_revisions'] = c.fetchone()[0]
+            
+            # Items by Status/Condition
+            c.execute("SELECT condition, COUNT(*) FROM items WHERE condition IS NOT NULL AND condition != '' GROUP BY condition ORDER BY COUNT(*) DESC")
+            analytics['items_by_condition'] = c.fetchall()
+            
+            # Items by Brand
+            c.execute("SELECT brand, COUNT(*) FROM items WHERE brand IS NOT NULL AND brand != '' GROUP BY brand ORDER BY COUNT(*) DESC LIMIT 10")
+            analytics['top_brands'] = c.fetchall()
+            
+            # Items by Maker
+            c.execute("SELECT maker, COUNT(*) FROM items WHERE maker IS NOT NULL AND maker != '' GROUP BY maker ORDER BY COUNT(*) DESC LIMIT 10")
+            analytics['top_makers'] = c.fetchall()
+            
+            # Price Analytics
+            try:
+                c.execute("SELECT MIN(CAST(price AS FLOAT)), MAX(CAST(price AS FLOAT)), AVG(CAST(price AS FLOAT)) FROM prices WHERE price IS NOT NULL AND price != '' AND price NOT LIKE '%[^0-9.]%'")
+                price_stats = c.fetchone()
+                analytics['price_min'] = price_stats[0] if price_stats[0] else 0
+                analytics['price_max'] = price_stats[1] if price_stats[1] else 0
+                analytics['price_avg'] = price_stats[2] if price_stats[2] else 0
+            except:
+                analytics['price_min'] = 0
+                analytics['price_max'] = 0
+                analytics['price_avg'] = 0
+            
+            # Price ranges distribution
+            try:
+                c.execute("""
+                    SELECT 
+                        CASE 
+                            WHEN CAST(price AS FLOAT) < 50 THEN 'Under $50'
+                            WHEN CAST(price AS FLOAT) < 100 THEN '$50-$100'
+                            WHEN CAST(price AS FLOAT) < 250 THEN '$100-$250'
+                            WHEN CAST(price AS FLOAT) < 500 THEN '$250-$500'
+                            WHEN CAST(price AS FLOAT) < 1000 THEN '$500-$1000'
+                            ELSE 'Over $1000'
+                        END as price_range,
+                        COUNT(*) as count
+                    FROM prices 
+                    WHERE price IS NOT NULL AND price != '' AND price NOT LIKE '%[^0-9.]%'
+                    GROUP BY price_range
+                    ORDER BY MIN(CAST(price AS FLOAT))
+                """)
+                analytics['price_distribution'] = c.fetchall()
+            except:
+                analytics['price_distribution'] = []
+            
+            # Activity by Month (last 12 months)
+            try:
+                c.execute("""
+                    SELECT 
+                        strftime('%Y-%m', created_at) as month,
+                        COUNT(*) as items_added
+                    FROM items 
+                    WHERE created_at IS NOT NULL 
+                    AND date(created_at) >= date('now', '-12 months')
+                    GROUP BY month
+                    ORDER BY month DESC
+                    LIMIT 12
+                """)
+                analytics['monthly_activity'] = c.fetchall()
+            except:
+                analytics['monthly_activity'] = []
+            
+            # Top items by image count
+            try:
+                c.execute("""
+                    SELECT i.title, i.brand, COUNT(img.id) as image_count
+                    FROM items i
+                    LEFT JOIN images img ON i.id = img.item_id
+                    GROUP BY i.id, i.title, i.brand
+                    HAVING image_count > 0
+                    ORDER BY image_count DESC
+                    LIMIT 10
+                """)
+                analytics['most_documented_items'] = c.fetchall()
+            except:
+                analytics['most_documented_items'] = []
+            
+            # Items with most revisions
+            try:
+                c.execute("""
+                    SELECT i.title, i.brand, COUNT(r.id) as revision_count
+                    FROM items i
+                    LEFT JOIN revisions r ON i.id = r.item_id
+                    GROUP BY i.id, i.title, i.brand
+                    HAVING revision_count > 0
+                    ORDER BY revision_count DESC
+                    LIMIT 10
+                """)
+                analytics['most_revised_items'] = c.fetchall()
+            except:
+                analytics['most_revised_items'] = []
+            
+            # Data quality metrics
+            c.execute("SELECT COUNT(*) FROM items WHERE title IS NOT NULL AND title != ''")
+            analytics['items_with_title'] = c.fetchone()[0]
+            
+            c.execute("SELECT COUNT(*) FROM items WHERE description IS NOT NULL AND description != ''")
+            analytics['items_with_description'] = c.fetchone()[0]
+            
+            c.execute("SELECT COUNT(*) FROM items WHERE provenance_notes IS NOT NULL AND provenance_notes != ''")
+            analytics['items_with_provenance'] = c.fetchone()[0]
+            
+            # Storage metrics
+            c.execute("SELECT AVG(LENGTH(title)), AVG(LENGTH(description)), AVG(LENGTH(notes)) FROM items")
+            text_lengths = c.fetchone()
+            analytics['avg_title_length'] = text_lengths[0] if text_lengths[0] else 0
+            analytics['avg_description_length'] = text_lengths[1] if text_lengths[1] else 0
+            analytics['avg_notes_length'] = text_lengths[2] if text_lengths[2] else 0
+            
+            # Recent activity (last 30 days)
+            try:
+                c.execute("SELECT COUNT(*) FROM items WHERE date(created_at) >= date('now', '-30 days')")
+                analytics['items_added_30_days'] = c.fetchone()[0]
+            except:
+                analytics['items_added_30_days'] = 0
+            
+            try:
+                c.execute("SELECT COUNT(*) FROM revisions WHERE date(timestamp) >= date('now', '-30 days')")
+                analytics['revisions_30_days'] = c.fetchone()[0]
+            except:
+                analytics['revisions_30_days'] = 0
+            
+        except Exception as e:
+            print(f"[Analytics] Error getting analytics data: {e}")
+            # Return default values if there's an error
+            return {
+                'total_items': 0,
+                'total_images': 0,
+                'total_price_entries': 0,
+                'total_revisions': 0,
+                'items_by_condition': [],
+                'top_brands': [],
+                'top_makers': [],
+                'price_min': 0,
+                'price_max': 0,
+                'price_avg': 0,
+                'price_distribution': [],
+                'monthly_activity': [],
+                'most_documented_items': [],
+                'most_revised_items': [],
+                'items_with_title': 0,
+                'items_with_description': 0,
+                'items_with_provenance': 0,
+                'avg_title_length': 0,
+                'avg_description_length': 0,
+                'avg_notes_length': 0,
+                'items_added_30_days': 0,
+                'revisions_30_days': 0,
+            }
+        
+        return analytics

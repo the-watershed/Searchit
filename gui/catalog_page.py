@@ -60,8 +60,10 @@ class _MultiSortHeader(QHeaderView):
             
             self._update_header_text()
             
-            # Notify parent to re-sort the data
-            if hasattr(self.parent(), '_apply_multi_sort'):
+            # Notify parent to re-sort the data efficiently
+            if hasattr(self.parent(), '_apply_efficient_multi_sort'):
+                self.parent()._apply_efficient_multi_sort(self._sort_criteria)
+            elif hasattr(self.parent(), '_apply_multi_sort'):
                 self.parent()._apply_multi_sort(self._sort_criteria)
                 
         except Exception as e:
@@ -164,6 +166,14 @@ class CatalogPage(QWidget):
         self.current_row = 0
         # Multi-sort state
         self._sort_criteria = [(1, Qt.AscendingOrder)]  # Default sort by Title column ascending
+        # Performance optimization: cache table data and conversion results
+        self._table_data = []
+        self._data_version = 0  # Increment when data changes
+        # Debounce rapid selection changes
+        self._detail_timer = None
+        # Image cache for better performance (with size limit)
+        self._image_cache = {}  # path -> QPixmap
+        self._max_cache_size = 100  # Limit cache to prevent memory issues
         # Image preview (scrollable grid)
         self.img_scroll = None
         self.img_container = None
@@ -318,57 +328,63 @@ class CatalogPage(QWidget):
             pass
 
     def _apply_multi_sort(self, sort_criteria):
-        """Apply multi-column sorting to the table data."""
+        """Apply multi-column sorting to the table data (legacy method)."""
+        # Use the new efficient method
+        self._apply_efficient_multi_sort(sort_criteria)
+
+    def _apply_efficient_multi_sort(self, sort_criteria):
+        """Apply multi-column sorting efficiently using pre-built data."""
         try:
             if not sort_criteria:
                 print("[CatalogPage] No sort criteria provided")
+                self._populate_table_from_data(self._table_data)
                 return
             
-            print(f"[CatalogPage] Applying multi-sort with criteria: {sort_criteria}")
+            print(f"[CatalogPage] Applying efficient multi-sort with criteria: {sort_criteria}")
             
-            # Get all table rows as tuples of (row_index, values)
-            rows_data = []
-            for row in range(self.table.rowCount()):
-                row_values = []
-                for col in range(self.table.columnCount()):
-                    item = self.table.item(row, col)
-                    value = item.text() if item else ""
-                    row_values.append(value)
-                rows_data.append((row, row_values))
+            # Pre-convert sort values to avoid repeated conversions
+            converted_data = []
+            for row_data in self._table_data:
+                converted_row = []
+                for col_index, value in enumerate(row_data):
+                    converted_value = self._convert_sort_value(value, col_index)
+                    converted_row.append(converted_value)
+                converted_data.append((row_data, converted_row))
             
-            # Sort using multiple criteria
-            def multi_sort_key(row_data):
-                _, values = row_data
+            # Sort using pre-converted values
+            def multi_sort_key(data_pair):
+                original_row, converted_row = data_pair
                 sort_keys = []
                 
                 for col_index, sort_order in sort_criteria:
-                    if col_index < len(values):
-                        value = values[col_index]
+                    if col_index < len(converted_row):
+                        sort_value = converted_row[col_index]
                         
-                        # Try to convert to appropriate type for sorting
-                        sort_value = self._convert_sort_value(value, col_index)
-                        
-                        # Reverse for descending order
+                        # Handle descending order efficiently
                         if sort_order == Qt.DescendingOrder:
                             if isinstance(sort_value, str):
-                                sort_value = sort_value.lower()  # Case-insensitive
-                                sort_keys.append((False, sort_value))  # False sorts before True
+                                # Use tuple reversal for strings to maintain lexicographic order
+                                sort_keys.append((1, sort_value))  # 1 > 0, so this sorts after ascending
                             else:
                                 sort_keys.append(-sort_value if isinstance(sort_value, (int, float)) else sort_value)
                         else:
                             if isinstance(sort_value, str):
-                                sort_value = sort_value.lower()  # Case-insensitive  
-                            sort_keys.append(sort_value)
+                                sort_keys.append((0, sort_value))  # 0 < 1, so this sorts before descending
+                            else:
+                                sort_keys.append(sort_value)
                     else:
                         sort_keys.append("")  # Default for missing columns
                 
                 return sort_keys
             
-            # Sort the data
-            sorted_rows = sorted(rows_data, key=multi_sort_key)
+            # Sort the data efficiently
+            sorted_data = sorted(converted_data, key=multi_sort_key)
             
-            # Rearrange table rows according to sorted order
-            self._rearrange_table_rows(sorted_rows)
+            # Extract just the original row data for table population
+            sorted_table_data = [data_pair[0] for data_pair in sorted_data]
+            
+            # Populate table efficiently
+            self._populate_table_from_data(sorted_table_data)
             
             # Update the sort criteria state
             self._sort_criteria = sort_criteria[:]
@@ -377,27 +393,58 @@ class CatalogPage(QWidget):
             self.show_details()
             
         except Exception as e:
-            print(f"[CatalogPage] Error in multi-sort: {e}")
+            print(f"[CatalogPage] Error in efficient multi-sort: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _populate_table_from_data(self, table_data):
+        """Efficiently populate table from pre-built data."""
+        try:
+            # Remember current selection
+            current_id = self._selected_item_id()
+            
+            # Set table size once
+            self.table.setRowCount(len(table_data))
+            
+            # Bulk populate - much faster than repeated setItem calls
+            for row, row_data in enumerate(table_data):
+                for col, value in enumerate(row_data):
+                    # Reuse existing items where possible to avoid object creation
+                    existing_item = self.table.item(row, col)
+                    if existing_item:
+                        existing_item.setText(value)
+                    else:
+                        self.table.setItem(row, col, QTableWidgetItem(value))
+            
+            # Restore selection by ID if possible
+            if current_id:
+                self._select_row_by_id(current_id)
+                
+        except Exception as e:
+            print(f"[CatalogPage] Error populating table: {e}")
             import traceback
             traceback.print_exc()
 
     def _convert_sort_value(self, value: str, col_index: int):
-        """Convert string value to appropriate type for sorting."""
+        """Convert string value to appropriate type for sorting (optimized)."""
         try:
-            # Price columns (8, 9, 10) should be sorted as numbers
+            if not value:  # Handle empty strings early
+                return 0.0 if col_index in [0, 8, 9, 10] else ""
+            
+            # Price columns (8, 9, 10) and ID (0) should be sorted as numbers
             if col_index in [0, 8, 9, 10]:  # ID, Price Low, Price Med, Price High
                 try:
-                    return float(value) if value else 0.0
+                    return float(value)
                 except ValueError:
                     return 0.0
             
             # Date column (12) - basic string sort should work for ISO dates
             elif col_index == 12:  # Created At
-                return value if value else ""
+                return value
             
-            # All other columns sort as strings (case-insensitive)
+            # All other columns sort as strings (pre-lowercased for efficiency)
             else:
-                return value.lower() if value else ""
+                return value.lower()
                 
         except Exception:
             return value if value else ""
@@ -649,7 +696,7 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
         else:
             current_sort_criteria = self._sort_criteria
         
-        # Load fresh data from database
+        # Load fresh data from database (now optimized - no N+1 queries)
         self.items = self.db.get_all_items()
         # Fast lookup by ID for current page state
         try:
@@ -657,31 +704,42 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
         except Exception:
             self._items_by_id = {}
         
-        # Populate table with raw data (unsorted)
-        self.table.setRowCount(len(self.items))
-        for row, item in enumerate(self.items):
-            low, med, high = self.db.get_price_range(item["id"])
-            self.table.setItem(row, 0, QTableWidgetItem(str(item["id"])) )
-            self.table.setItem(row, 1, QTableWidgetItem(item.get("title", "")))
-            self.table.setItem(row, 2, QTableWidgetItem(item.get("brand", "")))
-            self.table.setItem(row, 3, QTableWidgetItem(item.get("maker", "")))
-            self.table.setItem(row, 4, QTableWidgetItem(item.get("description", "")))
-            self.table.setItem(row, 5, QTableWidgetItem(item.get("condition", "")))
-            self.table.setItem(row, 6, QTableWidgetItem(item.get("provenance_notes", "")))
-            self.table.setItem(row, 7, QTableWidgetItem(item.get("notes", "")))
-            self.table.setItem(row, 8, QTableWidgetItem(str(low)))
-            self.table.setItem(row, 9, QTableWidgetItem(str(med)))
-            self.table.setItem(row, 10, QTableWidgetItem(str(high)))
-            self.table.setItem(row, 11, QTableWidgetItem(item.get("image_path", "")))
-            self.table.setItem(row, 12, QTableWidgetItem(item.get("created_at", "")))
+        # Pre-build table data in memory for efficient sorting
+        self._table_data = []
+        for item in self.items:
+            # Price data is now included in the main query (no extra calls)
+            low = item.get('prc_low', 0.0)
+            med = item.get('prc_med', 0.0)
+            high = item.get('prc_hi', 0.0)
+            
+            row_data = [
+                str(item["id"]),
+                item.get("title", ""),
+                item.get("brand", ""),
+                item.get("maker", ""),
+                item.get("description", ""),
+                item.get("condition", ""),
+                item.get("provenance_notes", ""),
+                item.get("notes", ""),
+                str(low),
+                str(med),
+                str(high),
+                item.get("image_path", ""),
+                item.get("created_at", ""),
+            ]
+            self._table_data.append(row_data)
         
-        # Apply multi-sort if we have criteria
+        # Apply sorting efficiently using pre-built data
         if current_sort_criteria:
             print(f"[CatalogPage] Refresh: Applying sort criteria {current_sort_criteria}")
-            self._apply_multi_sort(current_sort_criteria)
-            # Update header display
-            if hasattr(header, 'set_sort_criteria'):
-                header.set_sort_criteria(current_sort_criteria)
+            self._apply_efficient_multi_sort(current_sort_criteria)
+        else:
+            # No sorting - just populate table with raw data
+            self._populate_table_from_data(self._table_data)
+        
+        # Update header display
+        if hasattr(header, 'set_sort_criteria'):
+            header.set_sort_criteria(current_sort_criteria)
         
         # Restore selection by ID if possible
         if current_id:
@@ -701,6 +759,24 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
         self.show_details()
 
     def show_details(self):
+        """Show details for selected item with debouncing for performance."""
+        # Cancel previous timer to debounce rapid selection changes
+        if self._detail_timer:
+            try:
+                self._detail_timer.stop()
+                self._detail_timer.deleteLater()
+            except Exception:
+                pass
+        
+        # Set up new timer for debounced update
+        from PyQt5.QtCore import QTimer
+        self._detail_timer = QTimer()
+        self._detail_timer.setSingleShot(True)
+        self._detail_timer.timeout.connect(self._show_details_impl)
+        self._detail_timer.start(50)  # 50ms debounce
+    
+    def _show_details_impl(self):
+        """Actual implementation of show_details (called after debounce)."""
         if not hasattr(self, 'items') or not self.items:
             self._populate_image_thumbs(None)
             return
@@ -737,10 +813,28 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
             if p and p not in seen:
                 seen.add(p)
                 paths.append(p)
-        # Populate grid
+        # Populate grid with cached images for efficiency
         cols, r, c = 6, 0, 0
         for p in paths:
-            pix = QPixmap(p)
+            # Use cached pixmap if available
+            pix = self._image_cache.get(p)
+            if pix is None:
+                pix = QPixmap(p)
+                if not pix.isNull():
+                    # Cache the scaled version to avoid repeated scaling
+                    scaled_pix = pix.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    
+                    # Manage cache size to prevent memory issues
+                    if len(self._image_cache) >= self._max_cache_size:
+                        # Remove oldest entries (simple FIFO)
+                        oldest_key = next(iter(self._image_cache))
+                        del self._image_cache[oldest_key]
+                    
+                    self._image_cache[p] = scaled_pix
+                    pix = scaled_pix
+                else:
+                    continue
+            
             if pix.isNull():
                 continue
 
@@ -755,7 +849,7 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
             img_lbl.setFixedSize(96, 96)
             img_lbl.setAlignment(Qt.AlignCenter)
             img_lbl.setToolTip(p)
-            img_lbl.setPixmap(pix.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            img_lbl.setPixmap(pix)  # Use already-scaled cached pixmap
             vbox.addWidget(img_lbl, 0, Qt.AlignHCenter)
 
             # Annotation text (if any)
