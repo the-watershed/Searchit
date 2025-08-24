@@ -26,72 +26,133 @@ from .edit_image_dialog import EditImageDialog
 from .utils import run_in_thread
 
 
-class _SortHeader(QHeaderView):
-    """Custom header that adds ASCII arrow characters to header text."""
+class _MultiSortHeader(QHeaderView):
+    """Custom header that supports multi-column sorting with visual indicators."""
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
-        # We'll modify header text directly; hide the built-in indicator
+        # Disable built-in sorting - we'll handle it ourselves
         self.setSortIndicatorShown(False)
-        # Track current sort state locally
-        self._active_sort_section = -1
-        self._active_sort_order = Qt.AscendingOrder
+        
+        # Multi-sort state: list of (column, order) tuples in priority order
+        self._sort_criteria = []  # [(col, order), (col, order), ...]
+        
         # Store original header texts without arrows
         self._original_headers = {}
-        try:
-            self.sortIndicatorChanged.connect(self._on_sort_indicator_changed_local)
-        except Exception:
-            pass
+        
+        # Connect to header clicks for multi-sort logic
+        self.sectionClicked.connect(self._on_section_clicked)
 
-    def _on_sort_indicator_changed_local(self, section: int, order):
+    def _on_section_clicked(self, section: int):
+        """Handle header clicks for multi-sort behavior."""
         try:
-            self._active_sort_section = int(section)
-            self._active_sort_order = order
-            print(f"[SortHeader] Sort changed: section={section}, order={order}")
+            from PyQt5.QtWidgets import QApplication
+            modifiers = QApplication.keyboardModifiers()
+            
+            # Check if Ctrl/Cmd is held for multi-sort
+            ctrl_held = bool(modifiers & Qt.ControlModifier)
+            
+            if ctrl_held:
+                # Multi-sort mode: add/modify/remove from sort criteria
+                self._handle_multi_sort(section)
+            else:
+                # Single sort mode: replace all criteria with this column
+                self._handle_single_sort(section)
+            
             self._update_header_text()
+            
+            # Notify parent to re-sort the data
+            if hasattr(self.parent(), '_apply_multi_sort'):
+                self.parent()._apply_multi_sort(self._sort_criteria)
+                
         except Exception as e:
-            print(f"[SortHeader] Error in sort change: {e}")
+            print(f"[MultiSortHeader] Error in section click: {e}")
+
+    def _handle_single_sort(self, section: int):
+        """Handle single-column sort (clear all others)."""
+        # Find current order for this column, or default to ascending
+        current_order = Qt.AscendingOrder
+        
+        # If this column is already the primary sort, toggle its order
+        if self._sort_criteria and self._sort_criteria[0][0] == section:
+            current_order = Qt.DescendingOrder if self._sort_criteria[0][1] == Qt.AscendingOrder else Qt.AscendingOrder
+        
+        # Replace all criteria with this single column
+        self._sort_criteria = [(section, current_order)]
+        print(f"[MultiSortHeader] Single sort: column {section}, order {current_order}")
+
+    def _handle_multi_sort(self, section: int):
+        """Handle multi-column sort (Ctrl+click behavior)."""
+        # Check if this column is already in the criteria
+        existing_index = None
+        for i, (col, order) in enumerate(self._sort_criteria):
+            if col == section:
+                existing_index = i
+                break
+        
+        if existing_index is not None:
+            # Column exists - cycle through: asc -> desc -> remove
+            current_order = self._sort_criteria[existing_index][1]
+            if current_order == Qt.AscendingOrder:
+                # Change to descending
+                self._sort_criteria[existing_index] = (section, Qt.DescendingOrder)
+                print(f"[MultiSortHeader] Changed column {section} to descending")
+            else:
+                # Remove from criteria
+                self._sort_criteria.pop(existing_index)
+                print(f"[MultiSortHeader] Removed column {section} from sort criteria")
+        else:
+            # New column - add as ascending at the end
+            self._sort_criteria.append((section, Qt.AscendingOrder))
+            print(f"[MultiSortHeader] Added column {section} as ascending")
 
     def _update_header_text(self):
-        """Update header text to include ASCII arrows."""
+        """Update header text to show multi-sort indicators."""
         try:
             model = self.model()
             if not model:
                 return
                 
-            # First, restore all headers to original text (remove any existing arrows)
+            # First, restore all headers to original text
             for col in range(model.columnCount()):
                 original_text = self._original_headers.get(col, "")
                 if original_text:
                     model.setHeaderData(col, Qt.Horizontal, original_text, Qt.DisplayRole)
             
-            # Add arrow to the active sort column
-            if self._active_sort_section >= 0:
-                section = self._active_sort_section
+            # Add indicators for each sorted column
+            for priority, (section, order) in enumerate(self._sort_criteria):
                 original_text = self._original_headers.get(section, "")
                 if original_text:
-                    # Choose arrow based on sort order
-                    if self._active_sort_order == Qt.AscendingOrder:
-                        arrow = "▲ "  # Up arrow for ascending
-                    else:
-                        arrow = "▼ "  # Down arrow for descending
+                    # Choose arrow and priority number
+                    arrow = "▲" if order == Qt.AscendingOrder else "▼"
+                    priority_num = f"{priority + 1}" if len(self._sort_criteria) > 1 else ""
                     
-                    new_text = arrow + original_text
+                    # Format: "1▲ Title" or "▲ Title" for single sort
+                    prefix = f"{priority_num}{arrow} " if priority_num else f"{arrow} "
+                    new_text = prefix + original_text
+                    
                     model.setHeaderData(section, Qt.Horizontal, new_text, Qt.DisplayRole)
-                    print(f"[SortHeader] Updated header {section}: '{new_text}'")
+                    print(f"[MultiSortHeader] Updated header {section}: '{new_text}'")
+                    
         except Exception as e:
-            print(f"[SortHeader] Error updating header text: {e}")
+            print(f"[MultiSortHeader] Error updating header text: {e}")
 
     def store_original_headers(self, headers):
         """Store the original header texts before we modify them."""
         self._original_headers = {i: headers[i] for i in range(len(headers))}
-        print(f"[SortHeader] Stored original headers: {self._original_headers}")
+        print(f"[MultiSortHeader] Stored original headers: {self._original_headers}")
 
-    def set_sort_section(self, section, order):
-        """Manually set sort section and update display."""
-        self._active_sort_section = section
-        self._active_sort_order = order
+    def set_sort_criteria(self, criteria):
+        """Manually set sort criteria and update display."""
+        self._sort_criteria = criteria[:]  # Copy the list
         self._update_header_text()
 
+    def get_sort_criteria(self):
+        """Get current sort criteria."""
+        return self._sort_criteria[:]
+
+    def clear_sort(self):
+        """Clear all sort criteria."""
+        self._sort_criteria = []
         self._update_header_text()
 
 
@@ -101,9 +162,8 @@ class CatalogPage(QWidget):
         self.app = app
         self.db = DB()
         self.current_row = 0
-        # Default sort by Title column
-        self._sort_col = 1
-        self._sort_order = Qt.AscendingOrder
+        # Multi-sort state
+        self._sort_criteria = [(1, Qt.AscendingOrder)]  # Default sort by Title column ascending
         # Image preview (scrollable grid)
         self.img_scroll = None
         self.img_container = None
@@ -113,6 +173,12 @@ class CatalogPage(QWidget):
 
     def _build_ui(self):
         main_layout = QVBoxLayout()
+        
+        # Add instruction label for multi-sort
+        instruction_label = QLabel("💡 Click column headers to sort. Hold Ctrl+Click to add multiple sort criteria.")
+        instruction_label.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
+        main_layout.addWidget(instruction_label)
+        
         self.splitter = QSplitter(Qt.Vertical)
 
         # Table (top)
@@ -140,12 +206,12 @@ class CatalogPage(QWidget):
         self.table.setSelectionBehavior(self.table.SelectRows)
         self.table.setSelectionMode(self.table.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        # Sorting + resize + column drag
-        self.table.setSortingEnabled(True)
+        # Disable built-in sorting - we'll handle multi-sort ourselves
+        self.table.setSortingEnabled(False)
         self.table.setAlternatingRowColors(True)
 
-        # Install custom header for ASCII arrow display
-        header = _SortHeader(Qt.Horizontal, self.table)
+        # Install custom header for multi-sort display
+        header = _MultiSortHeader(Qt.Horizontal, self.table)
         self.table.setHorizontalHeader(header)
         
         # Store original header texts before we modify them
@@ -153,14 +219,14 @@ class CatalogPage(QWidget):
         
         header.setSectionsMovable(True)  # drag & drop to reorder columns
         header.setSectionsClickable(True)
-        # We'll modify header text directly; leave built-in hidden
+        # Built-in sorting is disabled, we handle multi-sort ourselves
         header.setSortIndicatorShown(False)
         header.setSectionResizeMode(QHeaderView.Interactive)  # allow resizing by user
         header.setStretchLastSection(False)
         
-        # Initialize with default sort
-        print(f"[CatalogPage] Setting initial sort: section={self._sort_col}, order={self._sort_order}")
-        header.set_sort_section(self._sort_col, self._sort_order)
+        # Initialize with default sort criteria
+        print(f"[CatalogPage] Setting initial sort criteria: {self._sort_criteria}")
+        header.set_sort_criteria(self._sort_criteria)
         
         # Remove padding since we're not using painted arrows anymore
         try:
@@ -180,11 +246,7 @@ class CatalogPage(QWidget):
             self._default_section_sizes = [header.sectionSize(i) for i in range(self.table.columnCount())]
         except Exception:
             self._default_section_sizes = []
-        # Keep track if user changes sort via API
-        try:
-            header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
-        except Exception:
-            pass
+        # Multi-sort functionality is handled in the header itself
         # Header context menu + double-click autosize
         header.setContextMenuPolicy(Qt.CustomContextMenu)
         header.customContextMenuRequested.connect(self._on_header_menu)
@@ -255,24 +317,123 @@ class CatalogPage(QWidget):
         except Exception:
             pass
 
-    def _on_header_clicked(self, logical_index: int):
-        # Toggle sort order for clicked column and apply sort
-        if self._sort_col == logical_index:
-            self._sort_order = Qt.DescendingOrder if self._sort_order == Qt.AscendingOrder else Qt.AscendingOrder
-        else:
-            self._sort_col = logical_index
-            self._sort_order = Qt.AscendingOrder
-        self.table.sortItems(self._sort_col, self._sort_order)
+    def _apply_multi_sort(self, sort_criteria):
+        """Apply multi-column sorting to the table data."""
         try:
-            self.table.horizontalHeader().setSortIndicator(self._sort_col, self._sort_order)
-            # Update header text with ASCII arrow
-            header = self.table.horizontalHeader()
-            header.set_sort_section(self._sort_col, self._sort_order)
-            print(f"[CatalogPage] Header clicked: sort by column {self._sort_col}, order {self._sort_order}")
+            if not sort_criteria:
+                print("[CatalogPage] No sort criteria provided")
+                return
+            
+            print(f"[CatalogPage] Applying multi-sort with criteria: {sort_criteria}")
+            
+            # Get all table rows as tuples of (row_index, values)
+            rows_data = []
+            for row in range(self.table.rowCount()):
+                row_values = []
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    value = item.text() if item else ""
+                    row_values.append(value)
+                rows_data.append((row, row_values))
+            
+            # Sort using multiple criteria
+            def multi_sort_key(row_data):
+                _, values = row_data
+                sort_keys = []
+                
+                for col_index, sort_order in sort_criteria:
+                    if col_index < len(values):
+                        value = values[col_index]
+                        
+                        # Try to convert to appropriate type for sorting
+                        sort_value = self._convert_sort_value(value, col_index)
+                        
+                        # Reverse for descending order
+                        if sort_order == Qt.DescendingOrder:
+                            if isinstance(sort_value, str):
+                                sort_value = sort_value.lower()  # Case-insensitive
+                                sort_keys.append((False, sort_value))  # False sorts before True
+                            else:
+                                sort_keys.append(-sort_value if isinstance(sort_value, (int, float)) else sort_value)
+                        else:
+                            if isinstance(sort_value, str):
+                                sort_value = sort_value.lower()  # Case-insensitive  
+                            sort_keys.append(sort_value)
+                    else:
+                        sort_keys.append("")  # Default for missing columns
+                
+                return sort_keys
+            
+            # Sort the data
+            sorted_rows = sorted(rows_data, key=multi_sort_key)
+            
+            # Rearrange table rows according to sorted order
+            self._rearrange_table_rows(sorted_rows)
+            
+            # Update the sort criteria state
+            self._sort_criteria = sort_criteria[:]
+            
+            # Refresh preview for currently selected row
+            self.show_details()
+            
         except Exception as e:
-            print(f"[CatalogPage] Error updating header after click: {e}")
-        # After sorting, refresh the preview for the currently selected row
-        self.show_details()
+            print(f"[CatalogPage] Error in multi-sort: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _convert_sort_value(self, value: str, col_index: int):
+        """Convert string value to appropriate type for sorting."""
+        try:
+            # Price columns (8, 9, 10) should be sorted as numbers
+            if col_index in [0, 8, 9, 10]:  # ID, Price Low, Price Med, Price High
+                try:
+                    return float(value) if value else 0.0
+                except ValueError:
+                    return 0.0
+            
+            # Date column (12) - basic string sort should work for ISO dates
+            elif col_index == 12:  # Created At
+                return value if value else ""
+            
+            # All other columns sort as strings (case-insensitive)
+            else:
+                return value.lower() if value else ""
+                
+        except Exception:
+            return value if value else ""
+
+    def _rearrange_table_rows(self, sorted_rows):
+        """Rearrange table rows according to the sorted order."""
+        try:
+            # Remember current selection
+            current_id = self._selected_item_id()
+            
+            # Temporarily disable sorting to avoid conflicts
+            self.table.setSortingEnabled(False)
+            
+            # Create new table content
+            new_table_data = []
+            for sort_index, (original_row_index, row_values) in enumerate(sorted_rows):
+                new_table_data.append(row_values)
+            
+            # Clear and repopulate table
+            self.table.setRowCount(0)
+            self.table.setRowCount(len(new_table_data))
+            
+            for row, row_values in enumerate(new_table_data):
+                for col, value in enumerate(row_values):
+                    self.table.setItem(row, col, QTableWidgetItem(value))
+            
+            # Restore selection by ID if possible
+            if current_id:
+                self._select_row_by_id(current_id)
+            elif new_table_data:
+                self.table.selectRow(0)
+                
+        except Exception as e:
+            print(f"[CatalogPage] Error rearranging table rows: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _on_header_double_clicked(self, logical_index: int):
         # Auto-fit the double-clicked column to contents
@@ -284,19 +445,33 @@ class CatalogPage(QWidget):
             pass
 
     def _on_header_menu(self, pos):
-        # Context menu on header to fit/reset columns
+        # Context menu on header to fit/reset columns and manage multi-sort
         header = self.table.horizontalHeader()
         try:
             col = header.logicalIndexAt(pos)
         except Exception:
             col = -1
         menu = QMenu(self)
+        
+        # Column sizing actions
         act_fit_col = menu.addAction("Fit This Column")
         act_reset_col = menu.addAction("Reset This Column")
         act_fit_all = menu.addAction("Fit All Columns")
         act_reset = menu.addAction("Reset Columns")
         
-        # Debug actions for triangle
+        # Multi-sort actions
+        menu.addSeparator()
+        act_clear_sort = menu.addAction("Clear All Sorting")
+        
+        # Show current sort criteria
+        if hasattr(header, 'get_sort_criteria'):
+            criteria = header.get_sort_criteria()
+            if criteria:
+                menu.addSeparator()
+                sort_info = menu.addAction(f"Current: {len(criteria)} sort criteria")
+                sort_info.setEnabled(False)  # Just for display
+        
+        # Debug actions
         menu.addSeparator()
         act_debug_info = menu.addAction("Debug Info")
         
@@ -327,27 +502,39 @@ class CatalogPage(QWidget):
             try:
                 if getattr(self, '_default_header_state', None):
                     header.restoreState(self._default_header_state)
-                # Ensure interactive resize and sorting remain enabled
+                # Ensure interactive resize and multi-sort remain enabled
                 header.setSectionResizeMode(QHeaderView.Interactive)
                 header.setSectionsMovable(True)
                 header.setSectionsClickable(True)
-                # Keep built-in indicator hidden; we paint our own
-                header.setSortIndicatorShown(False)
-                self.table.setSortingEnabled(True)
-                header.setSortIndicator(self._sort_col, self._sort_order)
+                header.setSortIndicatorShown(False)  # We handle our own indicators
             except Exception:
                 pass
+        elif action == act_clear_sort:
+            # Clear all sort criteria
+            try:
+                if hasattr(header, 'clear_sort'):
+                    header.clear_sort()
+                    self._sort_criteria = []
+                    print("[CatalogPage] Cleared all sort criteria")
+                    # Refresh without sorting to show original order
+                    self.refresh()
+            except Exception as e:
+                print(f"[CatalogPage] Error clearing sort: {e}")
         elif action == act_debug_info:
-            # Debug: show current state
+            # Debug: show current multi-sort state
             try:
                 from PyQt5.QtWidgets import QMessageBox
-                info = f"""Header Debug Info:
-Active Section: {header._active_sort_section}
-Active Order: {header._active_sort_order}
-Original Headers: {header._original_headers}
-Qt Sort Section: {header.sortIndicatorSection()}
-Qt Sort Order: {header.sortIndicatorOrder()}"""
-                QMessageBox.information(self, "Header Debug", info)
+                if hasattr(header, 'get_sort_criteria'):
+                    criteria = header.get_sort_criteria()
+                    criteria_str = ", ".join([f"Col{col}:{('Asc' if order==Qt.AscendingOrder else 'Desc')}" for col, order in criteria])
+                else:
+                    criteria_str = "N/A"
+                    
+                info = f"""Multi-Sort Debug Info:
+Sort Criteria: {criteria_str}
+Criteria Count: {len(self._sort_criteria)}
+Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
+                QMessageBox.information(self, "Multi-Sort Debug", info)
             except Exception as e:
                 from PyQt5.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Debug Error", str(e))
@@ -452,23 +639,25 @@ Qt Sort Order: {header.sortIndicatorOrder()}"""
             self._select_row_by_id(item_id)
 
     def refresh(self):
-        # Temporarily disable sorting while populating to avoid row churn
+        # Remember current selection and sort state
+        current_id = self._selected_item_id()
         header = self.table.horizontalHeader()
-        prev_sorting = self.table.isSortingEnabled()
-        try:
-            current_sort_col = header.sortIndicatorSection()
-            current_sort_order = header.sortIndicatorOrder()
-        except Exception:
-            current_sort_col = self._sort_col
-            current_sort_order = self._sort_order
-        self.table.setSortingEnabled(False)
-
+        
+        # Get current sort criteria from header or use defaults
+        if hasattr(header, 'get_sort_criteria'):
+            current_sort_criteria = header.get_sort_criteria()
+        else:
+            current_sort_criteria = self._sort_criteria
+        
+        # Load fresh data from database
         self.items = self.db.get_all_items()
         # Fast lookup by ID for current page state
         try:
             self._items_by_id = {it['id']: it for it in self.items}
         except Exception:
             self._items_by_id = {}
+        
+        # Populate table with raw data (unsorted)
         self.table.setRowCount(len(self.items))
         for row, item in enumerate(self.items):
             low, med, high = self.db.get_price_range(item["id"])
@@ -485,38 +674,30 @@ Qt Sort Order: {header.sortIndicatorOrder()}"""
             self.table.setItem(row, 10, QTableWidgetItem(str(high)))
             self.table.setItem(row, 11, QTableWidgetItem(item.get("image_path", "")))
             self.table.setItem(row, 12, QTableWidgetItem(item.get("created_at", "")))
-        # Keep current selection stable by ID if possible
-        current_id = self._selected_item_id()
+        
+        # Apply multi-sort if we have criteria
+        if current_sort_criteria:
+            print(f"[CatalogPage] Refresh: Applying sort criteria {current_sort_criteria}")
+            self._apply_multi_sort(current_sort_criteria)
+            # Update header display
+            if hasattr(header, 'set_sort_criteria'):
+                header.set_sort_criteria(current_sort_criteria)
+        
+        # Restore selection by ID if possible
         if current_id:
             self._select_row_by_id(current_id)
         elif self.items:
             self.table.selectRow(0)
-        # Re-enable sorting and re-apply indicator
-        self.table.setSortingEnabled(True if prev_sorting else False)
-        try:
-            self.table.sortItems(current_sort_col, current_sort_order)
-            header.setSortIndicator(current_sort_col, current_sort_order)
-            try:
-                header._active_sort_section = current_sort_col
-                header._active_sort_order = current_sort_order
-                header.update()
-            except Exception:
-                pass
-        except Exception:
-            pass
-        # Ensure columns remain user-resizable/movable
+            
+        # Ensure header remains interactive
         try:
             header.setSectionResizeMode(QHeaderView.Interactive)
             header.setSectionsMovable(True)
             header.setSectionsClickable(True)
-            # Keep built-in indicator hidden; custom painter draws arrow
-            header.setSortIndicatorShown(False)
-            header.setStyleSheet(
-                "QHeaderView::up-arrow, QHeaderView::down-arrow { image: none; width: 0px; height: 0px; }"
-                " QHeaderView::section { padding-left: 28px; }"
-            )
+            header.setSortIndicatorShown(False)  # We handle our own indicators
         except Exception:
             pass
+            
         self.show_details()
 
     def show_details(self):
@@ -699,10 +880,5 @@ Qt Sort Order: {header.sortIndicatorOrder()}"""
         except Exception:
             pass
 
-    def _on_sort_indicator_changed(self, section: int, order):
-        try:
-            self._sort_col = int(section)
-            self._sort_order = order
-        except Exception:
-            pass
+    # Multi-sort functionality - old single-sort method no longer needed
 
