@@ -18,6 +18,12 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QSplitter,
     QWidget,
+    QTabWidget,
+    QComboBox,
+    QCheckBox,
+    QSpinBox,
+    QDoubleSpinBox,
+    QScrollArea,
 )
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QSize
@@ -40,39 +46,177 @@ class EditItemDialog(QDialog):
         splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(splitter)
 
-        # Left: edit form
+        # Left: tabbed edit form for better organization
         left = QWidget()
-        form = QFormLayout(left)
-
+        left_layout = QVBoxLayout(left)
+        
+        # Create tab widget for organizing fields
+        tabs = QTabWidget()
+        
+        # Basic Information Tab
+        basic_tab = QWidget()
+        basic_form = QFormLayout(basic_tab)
+        
         self.title_edit = QLineEdit(self.item.get('title', ''))
         self.brand_edit = QLineEdit(self.item.get('brand', ''))
         self.maker_edit = QLineEdit(self.item.get('maker', ''))
         self.description_edit = QTextEdit(self.item.get('description', ''))
-        self.condition_edit = QLineEdit(self.item.get('condition', ''))
-        self.provenance_notes_edit = QTextEdit(self.item.get('provenance_notes', ''))
-        self.notes_edit = QTextEdit(self.item.get('notes', ''))
-
+        self.description_edit.setMaximumHeight(80)
+        
+        basic_form.addRow(QLabel("Title:"), self.title_edit)
+        basic_form.addRow(QLabel("Brand:"), self.brand_edit)
+        basic_form.addRow(QLabel("Maker:"), self.maker_edit)
+        basic_form.addRow(QLabel("Description:"), self.description_edit)
+        
+        tabs.addTab(basic_tab, "Basic Info")
+        
+        # Catalog Details Tab
+        catalog_tab = QWidget()
+        catalog_form = QFormLayout(catalog_tab)
+        
+        # Create scroll area for catalog form
+        catalog_scroll = QScrollArea()
+        catalog_scroll.setWidgetResizable(True)
+        catalog_scroll_widget = QWidget()
+        catalog_scroll_layout = QFormLayout(catalog_scroll_widget)
+        
+        self.category_edit = QLineEdit(self.item.get('category', ''))
+        self.subcategory_edit = QLineEdit(self.item.get('subcategory', ''))
+        self.era_period_edit = QLineEdit(self.item.get('era_period', ''))
+        self.material_edit = QLineEdit(self.item.get('material', ''))
+        self.dimensions_edit = QLineEdit(self.item.get('dimensions', ''))
+        self.weight_edit = QLineEdit(self.item.get('weight', ''))
+        self.color_scheme_edit = QLineEdit(self.item.get('color_scheme', ''))
+        
+        # Rarity dropdown
+        self.rarity_combo = QComboBox()
+        rarity_options = ["", "Common", "Uncommon", "Rare", "Very Rare", "Unique"]
+        self.rarity_combo.addItems(rarity_options)
+        current_rarity = self.item.get('rarity', '')
+        if current_rarity in rarity_options:
+            self.rarity_combo.setCurrentText(current_rarity)
+        
+        # Authentication dropdown
+        self.auth_combo = QComboBox()
+        auth_options = ["", "Authenticated", "Certificate of Authenticity", "Unsigned", "Questionable"]
+        self.auth_combo.addItems(auth_options)
+        current_auth = self.item.get('authentication', '')
+        if current_auth in auth_options:
+            self.auth_combo.setCurrentText(current_auth)
+        
+        # Condition dropdown
+        self.condition_combo = QComboBox()
+        condition_options = ["", "Mint", "Near Mint", "Excellent", "Very Good", "Good", "Fair", "Poor"]
+        self.condition_combo.addItems(condition_options)
+        current_condition = self.item.get('condition', '')
+        if current_condition in condition_options:
+            self.condition_combo.setCurrentText(current_condition)
+        else:
+            self.condition_combo.setCurrentText("")
+        
+        # Status dropdown
+        self.status_combo = QComboBox()
+        status_options = ["Available", "Sold", "On Hold", "Damaged", "Under Restoration", "Reserved"]
+        self.status_combo.addItems(status_options)
+        current_status = self.item.get('status', 'Available')
+        if current_status in status_options:
+            self.status_combo.setCurrentText(current_status)
+        
+        self.location_edit = QLineEdit(self.item.get('location_stored', ''))
+        self.tags_edit = QLineEdit(self.item.get('tags', ''))
+        
+        # Checkboxes
+        self.public_display_check = QCheckBox()
+        self.public_display_check.setChecked(bool(self.item.get('public_display', True)))
+        self.featured_item_check = QCheckBox()
+        self.featured_item_check.setChecked(bool(self.item.get('featured_item', False)))
+        
+        catalog_scroll_layout.addRow(QLabel("Category:"), self.category_edit)
+        catalog_scroll_layout.addRow(QLabel("Subcategory:"), self.subcategory_edit)
+        catalog_scroll_layout.addRow(QLabel("Era/Period:"), self.era_period_edit)
+        catalog_scroll_layout.addRow(QLabel("Material:"), self.material_edit)
+        catalog_scroll_layout.addRow(QLabel("Dimensions:"), self.dimensions_edit)
+        catalog_scroll_layout.addRow(QLabel("Weight:"), self.weight_edit)
+        catalog_scroll_layout.addRow(QLabel("Color Scheme:"), self.color_scheme_edit)
+        catalog_scroll_layout.addRow(QLabel("Rarity:"), self.rarity_combo)
+        catalog_scroll_layout.addRow(QLabel("Authentication:"), self.auth_combo)
+        catalog_scroll_layout.addRow(QLabel("Condition:"), self.condition_combo)
+        catalog_scroll_layout.addRow(QLabel("Status:"), self.status_combo)
+        catalog_scroll_layout.addRow(QLabel("Location:"), self.location_edit)
+        catalog_scroll_layout.addRow(QLabel("Tags:"), self.tags_edit)
+        catalog_scroll_layout.addRow(QLabel("Public Display:"), self.public_display_check)
+        catalog_scroll_layout.addRow(QLabel("Featured Item:"), self.featured_item_check)
+        
+        catalog_scroll.setWidget(catalog_scroll_widget)
+        catalog_form.addRow(catalog_scroll)
+        tabs.addTab(catalog_tab, "Catalog Details")
+        
+        # Financial Tab
+        financial_tab = QWidget()
+        financial_form = QFormLayout(financial_tab)
+        
         # Price range fields (editable)
         pr_low = self.item.get('prc_low')
         pr_med = self.item.get('prc_med')
         pr_hi = self.item.get('prc_hi')
         if pr_low in (None, '') and pr_med in (None, '') and pr_hi in (None, ''):
             pr_low, pr_med, pr_hi = self.db.get_price_range(self.item_id)
-        self.prc_low_edit = QLineEdit('' if pr_low in (None, '') else str(pr_low))
-        self.prc_med_edit = QLineEdit('' if pr_med in (None, '') else str(pr_med))
-        self.prc_hi_edit = QLineEdit('' if pr_hi in (None, '') else str(pr_hi))
-
-        # Form rows
-        form.addRow(QLabel("Title:"), self.title_edit)
-        form.addRow(QLabel("Brand:"), self.brand_edit)
-        form.addRow(QLabel("Maker:"), self.maker_edit)
-        form.addRow(QLabel("Description:"), self.description_edit)
-        form.addRow(QLabel("Condition:"), self.condition_edit)
-        form.addRow(QLabel("Price Low:"), self.prc_low_edit)
-        form.addRow(QLabel("Price Med:"), self.prc_med_edit)
-        form.addRow(QLabel("Price High:"), self.prc_hi_edit)
-        form.addRow(QLabel("Provenance Notes:"), self.provenance_notes_edit)
-        form.addRow(QLabel("Notes:"), self.notes_edit)
+        
+        self.prc_low_edit = QDoubleSpinBox()
+        self.prc_low_edit.setMaximum(999999.99)
+        self.prc_low_edit.setValue(float(pr_low) if pr_low not in (None, '') else 0.0)
+        
+        self.prc_med_edit = QDoubleSpinBox()
+        self.prc_med_edit.setMaximum(999999.99)
+        self.prc_med_edit.setValue(float(pr_med) if pr_med not in (None, '') else 0.0)
+        
+        self.prc_hi_edit = QDoubleSpinBox()
+        self.prc_hi_edit.setMaximum(999999.99)
+        self.prc_hi_edit.setValue(float(pr_hi) if pr_hi not in (None, '') else 0.0)
+        
+        self.acquisition_cost_edit = QDoubleSpinBox()
+        self.acquisition_cost_edit.setMaximum(999999.99)
+        acq_cost = self.item.get('acquisition_cost', 0.0)
+        self.acquisition_cost_edit.setValue(float(acq_cost) if acq_cost not in (None, '') else 0.0)
+        
+        self.insurance_value_edit = QDoubleSpinBox()
+        self.insurance_value_edit.setMaximum(999999.99)
+        ins_val = self.item.get('insurance_value', 0.0)
+        self.insurance_value_edit.setValue(float(ins_val) if ins_val not in (None, '') else 0.0)
+        
+        self.acquisition_date_edit = QLineEdit(self.item.get('acquisition_date', ''))
+        self.acquisition_source_edit = QLineEdit(self.item.get('acquisition_source', ''))
+        
+        financial_form.addRow(QLabel("Price Low:"), self.prc_low_edit)
+        financial_form.addRow(QLabel("Price Med:"), self.prc_med_edit)
+        financial_form.addRow(QLabel("Price High:"), self.prc_hi_edit)
+        financial_form.addRow(QLabel("Acquisition Cost:"), self.acquisition_cost_edit)
+        financial_form.addRow(QLabel("Insurance Value:"), self.insurance_value_edit)
+        financial_form.addRow(QLabel("Acquisition Date:"), self.acquisition_date_edit)
+        financial_form.addRow(QLabel("Acquisition Source:"), self.acquisition_source_edit)
+        
+        tabs.addTab(financial_tab, "Financial")
+        
+        # Notes Tab
+        notes_tab = QWidget()
+        notes_form = QFormLayout(notes_tab)
+        
+        self.provenance_notes_edit = QTextEdit(self.item.get('provenance_notes', ''))
+        self.notes_edit = QTextEdit(self.item.get('notes', ''))
+        
+        notes_form.addRow(QLabel("Provenance Notes:"), self.provenance_notes_edit)
+        notes_form.addRow(QLabel("General Notes:"), self.notes_edit)
+        
+        tabs.addTab(notes_tab, "Notes")
+        
+        left_layout.addWidget(tabs)
+        
+        # Save button
+        save_btn = QPushButton("Save Changes")
+        save_btn.clicked.connect(self._save_changes)
+        left_layout.addWidget(save_btn)
+        
+        splitter.addWidget(left)
 
         # Right: images and histories
         right = QWidget()
@@ -206,6 +350,56 @@ class EditItemDialog(QDialog):
                     self._reload_histories()
                 except Exception as e:
                     print(f"[ERROR] Could not rotate image: {e}")
+
+    def _save_changes(self):
+        """Save all field changes using the enhanced update method."""
+        fields = {
+            # Basic fields
+            'title': self.title_edit.text(),
+            'brand': self.brand_edit.text(),
+            'maker': self.maker_edit.text(),
+            'description': self.description_edit.toPlainText(),
+            
+            # Catalog details
+            'category': self.category_edit.text(),
+            'subcategory': self.subcategory_edit.text(),
+            'era_period': self.era_period_edit.text(),
+            'material': self.material_edit.text(),
+            'dimensions': self.dimensions_edit.text(),
+            'weight': self.weight_edit.text(),
+            'color_scheme': self.color_scheme_edit.text(),
+            'rarity': self.rarity_combo.currentText(),
+            'authentication': self.auth_combo.currentText(),
+            'condition': self.condition_combo.currentText(),
+            'status': self.status_combo.currentText(),
+            'location_stored': self.location_edit.text(),
+            'tags': self.tags_edit.text(),
+            'public_display': 1 if self.public_display_check.isChecked() else 0,
+            'featured_item': 1 if self.featured_item_check.isChecked() else 0,
+            
+            # Financial fields
+            'prc_low': self.prc_low_edit.value(),
+            'prc_med': self.prc_med_edit.value(),
+            'prc_hi': self.prc_hi_edit.value(),
+            'acquisition_cost': self.acquisition_cost_edit.value(),
+            'insurance_value': self.insurance_value_edit.value(),
+            'acquisition_date': self.acquisition_date_edit.text(),
+            'acquisition_source': self.acquisition_source_edit.text(),
+            
+            # Notes
+            'provenance_notes': self.provenance_notes_edit.toPlainText(),
+            'notes': self.notes_edit.toPlainText(),
+        }
+        
+        # Update using enhanced method
+        success = self.db.update_item_fields(self.item_id, fields)
+        
+        if success:
+            self.accept()
+        else:
+            # Show error message
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Save Error", "Failed to save changes to the database.")
 
     def _save(self):
         # Compare and update fields with change logging

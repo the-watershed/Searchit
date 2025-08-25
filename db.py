@@ -184,6 +184,26 @@ class DB:
             ("prc_low", "REAL"),
             ("prc_med", "REAL"),
             ("prc_hi", "REAL"),
+            # Enhanced cataloging fields
+            ("category", "TEXT"),           # e.g., "Furniture", "Jewelry", "Art", "Books"
+            ("subcategory", "TEXT"),        # e.g., "Chair", "Ring", "Painting", "Novel"
+            ("era_period", "TEXT"),         # e.g., "Victorian", "Art Deco", "Mid-Century Modern"
+            ("material", "TEXT"),           # e.g., "Wood", "Silver", "Oil on Canvas", "Paper"
+            ("dimensions", "TEXT"),         # e.g., "12\"x8\"x3\"", "H: 36\" W: 24\" D: 18\""
+            ("weight", "TEXT"),             # e.g., "2.5 lbs", "850g"
+            ("color_scheme", "TEXT"),       # e.g., "Brown/Gold", "Blue/White", "Multicolor"
+            ("rarity", "TEXT"),             # e.g., "Common", "Uncommon", "Rare", "Very Rare", "Unique"
+            ("authentication", "TEXT"),     # e.g., "Authenticated", "Certificate of Authenticity", "Unsigned", "Questionable"
+            ("acquisition_date", "TEXT"),   # When was it acquired
+            ("acquisition_source", "TEXT"), # Where was it acquired from
+            ("acquisition_cost", "REAL"),   # What was paid for it
+            ("insurance_value", "REAL"),    # Current insurance value
+            ("location_stored", "TEXT"),    # Where is it physically stored
+            ("tags", "TEXT"),               # Comma-separated tags for flexible categorization
+            ("status", "TEXT"),             # e.g., "Available", "Sold", "On Hold", "Damaged", "Under Restoration"
+            ("public_display", "INTEGER"),  # 0/1 boolean - should this be visible in public catalogs
+            ("featured_item", "INTEGER"),   # 0/1 boolean - is this a featured/highlighted item
+            ("last_updated", "TEXT"),       # Track when item was last modified
         ]
         for col, col_type in additional_columns:
             try:
@@ -293,7 +313,11 @@ class DB:
             '''
             SELECT id, image_path, notes, openai_result, created_at,
                    title, brand, maker, description, condition, provenance_notes,
-                   prc_low, prc_med, prc_hi
+                   prc_low, prc_med, prc_hi,
+                   category, subcategory, era_period, material, dimensions, weight,
+                   color_scheme, rarity, authentication, acquisition_date, acquisition_source,
+                   acquisition_cost, insurance_value, location_stored, tags, status,
+                   public_display, featured_item, last_updated
             FROM items WHERE id=?
             ''',
             (item_id,),
@@ -305,6 +329,10 @@ class DB:
             'id', 'image_path', 'notes', 'openai_result', 'created_at',
             'title', 'brand', 'maker', 'description', 'condition', 'provenance_notes',
             'prc_low', 'prc_med', 'prc_hi',
+            'category', 'subcategory', 'era_period', 'material', 'dimensions', 'weight',
+            'color_scheme', 'rarity', 'authentication', 'acquisition_date', 'acquisition_source',
+            'acquisition_cost', 'insurance_value', 'location_stored', 'tags', 'status',
+            'public_display', 'featured_item', 'last_updated'
         ]
         item = dict(zip(keys, row))
         item['images'] = self.get_images(item_id)
@@ -499,6 +527,80 @@ class DB:
             # Best-effort update; ignore failures to keep UI responsive
             pass
 
+    def update_item_fields(self, item_id, fields):
+        """Update item with enhanced field support.
+        
+        Args:
+            item_id (int): ID of item to update
+            fields (dict): Dictionary of field names and values to update
+        """
+        try:
+            # Get current item data for change tracking
+            current_item = self.get_item(item_id)
+            if not current_item:
+                return False
+            
+            # Build dynamic UPDATE query
+            update_fields = []
+            params = []
+            
+            # Define all updatable fields
+            updatable_fields = [
+                'title', 'brand', 'maker', 'description', 'condition', 'provenance_notes',
+                'notes', 'prc_low', 'prc_med', 'prc_hi', 'category', 'subcategory',
+                'era_period', 'material', 'dimensions', 'weight', 'color_scheme',
+                'rarity', 'authentication', 'acquisition_date', 'acquisition_source',
+                'acquisition_cost', 'insurance_value', 'location_stored', 'tags',
+                'status', 'public_display', 'featured_item'
+            ]
+            
+            # Always update last_updated timestamp
+            import datetime
+            fields['last_updated'] = datetime.datetime.now().isoformat()
+            
+            # Build SET clause
+            for field, value in fields.items():
+                if field in updatable_fields or field == 'last_updated':
+                    update_fields.append(f"{field} = ?")
+                    params.append(value)
+            
+            if not update_fields:
+                return False
+            
+            params.append(item_id)  # For WHERE clause
+            
+            # Execute update
+            c = self.conn.cursor()
+            query = f"UPDATE items SET {', '.join(update_fields)} WHERE id = ?"
+            c.execute(query, params)
+            self.conn.commit()
+            
+            # Record field changes
+            for field, new_value in fields.items():
+                if field in updatable_fields:  # Don't log last_updated changes
+                    old_value = current_item.get(field, '')
+                    if str(old_value) != str(new_value):
+                        self.record_change(item_id, field, str(old_value), str(new_value))
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error updating item {item_id}: {e}")
+            return False
+
+    def record_change(self, item_id, field, old_value, new_value):
+        """Record a field change in the item_changes table."""
+        try:
+            import datetime
+            c = self.conn.cursor()
+            c.execute(
+                "INSERT INTO item_changes (item_id, field, old_value, new_value, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (item_id, field, old_value, new_value, datetime.datetime.now().isoformat())
+            )
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error recording change for item {item_id}: {e}")
+
     def get_all_items(self):
         c = self.conn.cursor()
         c.execute(
@@ -535,6 +637,188 @@ class DB:
                 }
             )
         return items
+
+    def get_all_items_enhanced(self, search_text=None, filters=None, limit=None, offset=None):
+        """Enhanced item retrieval with search and filtering capabilities.
+        
+        Args:
+            search_text (str): Text to search across all text fields
+            filters (dict): Field-specific filters {field_name: value_or_list}
+            limit (int): Maximum number of results to return
+            offset (int): Number of results to skip (for pagination)
+        
+        Returns:
+            dict: {items: [...], total_count: int, filtered_count: int}
+        """
+        c = self.conn.cursor()
+        
+        # Build the base query with all available columns
+        base_query = '''
+            SELECT id, image_path, notes, created_at,
+                   title, brand, maker, description, condition, provenance_notes,
+                   prc_low, prc_med, prc_hi,
+                   category, subcategory, era_period, material, dimensions, weight,
+                   color_scheme, rarity, authentication, acquisition_date, acquisition_source,
+                   acquisition_cost, insurance_value, location_stored, tags, status,
+                   public_display, featured_item, last_updated
+            FROM items
+        '''
+        
+        # Build WHERE conditions
+        where_conditions = []
+        params = []
+        
+        # Text search across multiple fields
+        if search_text and search_text.strip():
+            search_text = search_text.strip()
+            search_conditions = [
+                "title LIKE ?",
+                "brand LIKE ?", 
+                "maker LIKE ?",
+                "description LIKE ?",
+                "condition LIKE ?",
+                "provenance_notes LIKE ?",
+                "notes LIKE ?",
+                "category LIKE ?",
+                "subcategory LIKE ?",
+                "era_period LIKE ?",
+                "material LIKE ?",
+                "tags LIKE ?",
+                "location_stored LIKE ?"
+            ]
+            where_conditions.append(f"({' OR '.join(search_conditions)})")
+            search_param = f"%{search_text}%"
+            params.extend([search_param] * len(search_conditions))
+        
+        # Field-specific filters
+        if filters:
+            for field, value in filters.items():
+                if value is None or value == '':
+                    continue
+                    
+                if isinstance(value, list):
+                    # Multiple values (OR condition)
+                    if value:
+                        placeholders = ','.join(['?'] * len(value))
+                        where_conditions.append(f"{field} IN ({placeholders})")
+                        params.extend(value)
+                elif isinstance(value, dict):
+                    # Range filters (for numeric fields)
+                    if 'min' in value and value['min'] is not None:
+                        where_conditions.append(f"{field} >= ?")
+                        params.append(value['min'])
+                    if 'max' in value and value['max'] is not None:
+                        where_conditions.append(f"{field} <= ?")
+                        params.append(value['max'])
+                else:
+                    # Single value
+                    where_conditions.append(f"{field} = ?")
+                    params.append(value)
+        
+        # Combine WHERE conditions
+        query = base_query
+        if where_conditions:
+            query += " WHERE " + " AND ".join(where_conditions)
+        
+        # Get total count before applying limit/offset
+        count_query = f"SELECT COUNT(*) FROM items"
+        if where_conditions:
+            count_query += " WHERE " + " AND ".join(where_conditions)
+        
+        c.execute(count_query, params)
+        filtered_count = c.fetchone()[0]
+        
+        # Get total count (unfiltered)
+        c.execute("SELECT COUNT(*) FROM items")
+        total_count = c.fetchone()[0]
+        
+        # Add ordering and pagination
+        query += " ORDER BY id DESC"
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+            if offset:
+                query += " OFFSET ?"
+                params.append(offset)
+        
+        # Execute main query
+        c.execute(query, params)
+        items = []
+        for row in c.fetchall():
+            item = {
+                'id': row[0],
+                'image_path': row[1],
+                'notes': row[2],
+                'created_at': row[3],
+                'title': row[4] or '',
+                'brand': row[5] or '',
+                'maker': row[6] or '',
+                'description': row[7] or '',
+                'condition': row[8] or '',
+                'provenance_notes': row[9] or '',
+                'prc_low': row[10] or 0.0,
+                'prc_med': row[11] or 0.0,
+                'prc_hi': row[12] or 0.0,
+                'category': row[13] or '',
+                'subcategory': row[14] or '',
+                'era_period': row[15] or '',
+                'material': row[16] or '',
+                'dimensions': row[17] or '',
+                'weight': row[18] or '',
+                'color_scheme': row[19] or '',
+                'rarity': row[20] or '',
+                'authentication': row[21] or '',
+                'acquisition_date': row[22] or '',
+                'acquisition_source': row[23] or '',
+                'acquisition_cost': row[24] or 0.0,
+                'insurance_value': row[25] or 0.0,
+                'location_stored': row[26] or '',
+                'tags': row[27] or '',
+                'status': row[28] or 'Available',
+                'public_display': bool(row[29]) if row[29] is not None else True,
+                'featured_item': bool(row[30]) if row[30] is not None else False,
+                'last_updated': row[31] or '',
+            }
+            items.append(item)
+        
+        return {
+            'items': items,
+            'total_count': total_count,
+            'filtered_count': filtered_count
+        }
+
+    def get_filter_options(self):
+        """Get all unique values for filterable fields to populate filter dropdowns."""
+        c = self.conn.cursor()
+        
+        filter_fields = [
+            'category', 'subcategory', 'era_period', 'material', 'condition',
+            'rarity', 'authentication', 'status', 'location_stored', 'brand', 'maker'
+        ]
+        
+        options = {}
+        for field in filter_fields:
+            try:
+                c.execute(f"SELECT DISTINCT {field} FROM items WHERE {field} IS NOT NULL AND {field} != '' ORDER BY {field}")
+                options[field] = [row[0] for row in c.fetchall()]
+            except Exception:
+                options[field] = []
+        
+        # Get price ranges for slider filters
+        try:
+            c.execute("SELECT MIN(prc_low), MAX(prc_hi), MIN(acquisition_cost), MAX(insurance_value) FROM items")
+            row = c.fetchone()
+            if row:
+                options['price_range'] = {
+                    'min_price': row[0] or 0,
+                    'max_price': row[1] or 0,
+                    'min_acquisition': row[2] or 0,
+                    'max_insurance': row[3] or 0
+                }
+        except Exception:
+            options['price_range'] = {'min_price': 0, 'max_price': 0, 'min_acquisition': 0, 'max_insurance': 0}
+        
+        return options
 
     # --- Migration helpers ---
     def _migrate_prices_to_columns(self):

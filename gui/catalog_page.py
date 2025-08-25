@@ -1,10 +1,12 @@
 """
-CatalogPage: Browse, sort, and preview images for all items.
+CatalogPage: Browse, sort, filter, and preview images for all items.
 """
 import os
+import csv
 from PyQt5.QtWidgets import (
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QTableWidget,
     QTableWidgetItem,
     QLabel,
@@ -17,13 +19,56 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QStyleOptionHeader,
     QStyle,
+    QLineEdit,
+    QPushButton,
+    QComboBox,
+    QCheckBox,
+    QSlider,
+    QSpinBox,
+    QGroupBox,
+    QFrame,
+    QFileDialog,
+    QMessageBox,
+    QProgressBar,
+    QApplication,
 )
 from PyQt5.QtGui import QPixmap, QPainter, QPolygon, QColor
-from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from db import DB
 from .edit_item_dialog import EditItemDialog
 from .edit_image_dialog import EditImageDialog
 from .utils import run_in_thread
+
+
+class _CollapsibleGroupBox(QGroupBox):
+    """A collapsible group box widget for organizing filter controls."""
+    
+    def __init__(self, title="", parent=None):
+        super().__init__(title, parent)
+        self.setCheckable(True)
+        self.setChecked(False)
+        self.toggled.connect(self._toggle_content)
+        
+        # Create container for content
+        self._content_widget = QWidget()
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._content_widget)
+        layout.setContentsMargins(10, 20, 10, 10)
+        
+        # Initially hide content
+        self._content_widget.setVisible(False)
+        
+    def set_content_layout(self, layout):
+        """Set the layout for the collapsible content."""
+        self._content_widget.setLayout(layout)
+        
+    def get_content_widget(self):
+        """Get the content widget to add widgets to."""
+        return self._content_widget
+        
+    def _toggle_content(self, checked):
+        """Toggle visibility of content."""
+        self._content_widget.setVisible(checked)
 
 
 class _MultiSortHeader(QHeaderView):
@@ -164,25 +209,74 @@ class CatalogPage(QWidget):
         self.app = app
         self.db = DB()
         self.current_row = 0
+        
         # Multi-sort state
         self._sort_criteria = [(1, Qt.AscendingOrder)]  # Default sort by Title column ascending
+        
         # Performance optimization: cache table data and conversion results
         self._table_data = []
         self._data_version = 0  # Increment when data changes
-        # Debounce rapid selection changes
+        
+        # Search and filter state
+        self._current_search_text = ""
+        self._current_filters = {}
+        self._filter_options = {}
+        self._results_info = {'total_count': 0, 'filtered_count': 0}
+        
+        # Debounce rapid selection changes and searches
         self._detail_timer = None
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._perform_search)
+        
         # Image cache for better performance (with size limit)
         self._image_cache = {}  # path -> QPixmap
         self._max_cache_size = 100  # Limit cache to prevent memory issues
-        # Image preview (scrollable grid)
-        self.img_scroll = None
-        self.img_container = None
-        self.img_grid = None
+        
+        # Enhanced column definitions with all new fields
+        self._column_definitions = [
+            ('id', 'ID'),
+            ('title', 'Title'), 
+            ('brand', 'Brand'),
+            ('maker', 'Maker'),
+            ('category', 'Category'),
+            ('subcategory', 'Subcategory'),
+            ('description', 'Description'),
+            ('condition', 'Condition'),
+            ('era_period', 'Era/Period'),
+            ('material', 'Material'),
+            ('dimensions', 'Dimensions'),
+            ('rarity', 'Rarity'),
+            ('status', 'Status'),
+            ('provenance_notes', 'Provenance'),
+            ('notes', 'Notes'),
+            ('prc_low', 'Price Low'),
+            ('prc_med', 'Price Med'), 
+            ('prc_hi', 'Price High'),
+            ('acquisition_cost', 'Acquisition Cost'),
+            ('insurance_value', 'Insurance Value'),
+            ('location_stored', 'Location'),
+            ('tags', 'Tags'),
+            ('image_path', 'Image Path'),
+            ('created_at', 'Created At'),
+        ]
+        
+        # Initialize filter options
+        self._load_filter_options()
+        
         self._build_ui()
         self.refresh()
 
     def _build_ui(self):
         main_layout = QVBoxLayout()
+        
+        # Search and Filter Panel
+        self._build_search_panel(main_layout)
+        
+        # Results info panel
+        self.results_label = QLabel("Loading...")
+        self.results_label.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
+        main_layout.addWidget(self.results_label)
         
         # Add instruction label for multi-sort
         instruction_label = QLabel("💡 Click column headers to sort. Hold Ctrl+Click to add multiple sort criteria.")
@@ -193,25 +287,12 @@ class CatalogPage(QWidget):
 
         # Table (top)
         self.table = QTableWidget()
-        self.table.setColumnCount(13)
         
-        # Define headers
-        header_labels = [
-            "ID",
-            "Title", 
-            "Brand",
-            "Maker",
-            "Description",
-            "Condition",
-            "Provenance Notes",
-            "Notes",
-            "Price Low",
-            "Price Med", 
-            "Price High",
-            "Image Path",
-            "Created At",
-        ]
+        # Set column count based on our column definitions
+        self.table.setColumnCount(len(self._column_definitions))
         
+        # Set headers from column definitions
+        header_labels = [col[1] for col in self._column_definitions]
         self.table.setHorizontalHeaderLabels(header_labels)
         self.table.setSelectionBehavior(self.table.SelectRows)
         self.table.setSelectionMode(self.table.SingleSelection)
@@ -303,6 +384,262 @@ class CatalogPage(QWidget):
 
         main_layout.addWidget(self.splitter)
         self.setLayout(main_layout)
+
+    def _build_search_panel(self, main_layout):
+        """Build the search and filter panel."""
+        # Create collapsible search/filter panel
+        search_group = _CollapsibleGroupBox("🔍 Search & Filters")
+        search_group.setChecked(True)  # Start expanded
+        
+        content_layout = QVBoxLayout()
+        
+        # Quick search bar
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search across all fields...")
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        search_row.addWidget(self.search_input)
+        
+        clear_search_btn = QPushButton("Clear")
+        clear_search_btn.clicked.connect(self._clear_search)
+        search_row.addWidget(clear_search_btn)
+        
+        content_layout.addLayout(search_row)
+        
+        # Filter controls in a grid
+        filter_frame = QFrame()
+        filter_layout = QGridLayout(filter_frame)
+        
+        row = 0
+        col = 0
+        max_cols = 4
+        
+        # Category filter
+        filter_layout.addWidget(QLabel("Category:"), row, col * 2)
+        self.category_filter = QComboBox()
+        self.category_filter.addItem("All Categories", "")
+        self.category_filter.currentTextChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.category_filter, row, col * 2 + 1)
+        
+        col += 1
+        if col >= max_cols:
+            col = 0
+            row += 1
+        
+        # Status filter
+        filter_layout.addWidget(QLabel("Status:"), row, col * 2)
+        self.status_filter = QComboBox()
+        self.status_filter.addItem("All Statuses", "")
+        self.status_filter.currentTextChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.status_filter, row, col * 2 + 1)
+        
+        col += 1
+        if col >= max_cols:
+            col = 0
+            row += 1
+        
+        # Condition filter
+        filter_layout.addWidget(QLabel("Condition:"), row, col * 2)
+        self.condition_filter = QComboBox()
+        self.condition_filter.addItem("All Conditions", "")
+        self.condition_filter.currentTextChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.condition_filter, row, col * 2 + 1)
+        
+        col += 1
+        if col >= max_cols:
+            col = 0
+            row += 1
+        
+        # Rarity filter
+        filter_layout.addWidget(QLabel("Rarity:"), row, col * 2)
+        self.rarity_filter = QComboBox()
+        self.rarity_filter.addItem("All Rarities", "")
+        self.rarity_filter.currentTextChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.rarity_filter, row, col * 2 + 1)
+        
+        row += 1
+        col = 0
+        
+        # Price range filter
+        filter_layout.addWidget(QLabel("Price Range:"), row, col * 2)
+        price_layout = QHBoxLayout()
+        self.price_min_input = QSpinBox()
+        self.price_min_input.setMaximum(999999)
+        self.price_min_input.valueChanged.connect(self._on_filter_changed)
+        self.price_max_input = QSpinBox()
+        self.price_max_input.setMaximum(999999)
+        self.price_max_input.valueChanged.connect(self._on_filter_changed)
+        price_layout.addWidget(self.price_min_input)
+        price_layout.addWidget(QLabel("to"))
+        price_layout.addWidget(self.price_max_input)
+        filter_layout.addLayout(price_layout, row, col * 2 + 1)
+        
+        col += 1
+        
+        # Featured items only checkbox
+        self.featured_only = QCheckBox("Featured Items Only")
+        self.featured_only.stateChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.featured_only, row, col * 2, 1, 2)
+        
+        content_layout.addWidget(filter_frame)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        
+        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn.clicked.connect(self.refresh)
+        button_layout.addWidget(refresh_btn)
+        
+        export_btn = QPushButton("📊 Export CSV")
+        export_btn.clicked.connect(self._export_csv)
+        button_layout.addWidget(export_btn)
+        
+        reset_filters_btn = QPushButton("🗑️ Reset Filters")
+        reset_filters_btn.clicked.connect(self._reset_filters)
+        button_layout.addWidget(reset_filters_btn)
+        
+        button_layout.addStretch()
+        content_layout.addLayout(button_layout)
+        
+        search_group.set_content_layout(content_layout)
+        main_layout.addWidget(search_group)
+    
+    def _load_filter_options(self):
+        """Load filter options from database."""
+        self._filter_options = self.db.get_filter_options()
+    
+    def _populate_filter_dropdowns(self):
+        """Populate filter dropdown menus with current options."""
+        # Category filter
+        self.category_filter.clear()
+        self.category_filter.addItem("All Categories", "")
+        for category in self._filter_options.get('category', []):
+            self.category_filter.addItem(category, category)
+        
+        # Status filter
+        self.status_filter.clear()
+        self.status_filter.addItem("All Statuses", "")
+        for status in self._filter_options.get('status', []):
+            self.status_filter.addItem(status, status)
+        
+        # Condition filter
+        self.condition_filter.clear()
+        self.condition_filter.addItem("All Conditions", "")
+        for condition in self._filter_options.get('condition', []):
+            self.condition_filter.addItem(condition, condition)
+        
+        # Rarity filter
+        self.rarity_filter.clear()
+        self.rarity_filter.addItem("All Rarities", "")
+        for rarity in self._filter_options.get('rarity', []):
+            self.rarity_filter.addItem(rarity, rarity)
+        
+        # Set price range limits
+        price_range = self._filter_options.get('price_range', {})
+        self.price_min_input.setMaximum(int(price_range.get('max_price', 999999)))
+        self.price_max_input.setMaximum(int(price_range.get('max_price', 999999)))
+        self.price_max_input.setValue(int(price_range.get('max_price', 999999)))
+    
+    def _on_search_text_changed(self):
+        """Handle search text changes with debouncing."""
+        self._search_timer.stop()
+        self._search_timer.start(300)  # 300ms delay
+    
+    def _on_filter_changed(self):
+        """Handle filter changes."""
+        self._search_timer.stop()
+        self._search_timer.start(100)  # Shorter delay for filters
+    
+    def _perform_search(self):
+        """Perform the actual search with current filters."""
+        search_text = self.search_input.text().strip()
+        
+        # Build filters dictionary
+        filters = {}
+        
+        category = self.category_filter.currentData()
+        if category:
+            filters['category'] = category
+        
+        status = self.status_filter.currentData()
+        if status:
+            filters['status'] = status
+        
+        condition = self.condition_filter.currentData()
+        if condition:
+            filters['condition'] = condition
+        
+        rarity = self.rarity_filter.currentData()
+        if rarity:
+            filters['rarity'] = rarity
+        
+        # Price range filter
+        price_min = self.price_min_input.value()
+        price_max = self.price_max_input.value()
+        if price_min > 0 or price_max < self.price_max_input.maximum():
+            filters['prc_low'] = {'min': price_min if price_min > 0 else None}
+            filters['prc_hi'] = {'max': price_max if price_max < self.price_max_input.maximum() else None}
+        
+        # Featured items filter
+        if self.featured_only.isChecked():
+            filters['featured_item'] = 1
+        
+        # Store current search state
+        self._current_search_text = search_text
+        self._current_filters = filters
+        
+        # Refresh the table with new search/filter criteria
+        self._refresh_with_search()
+    
+    def _clear_search(self):
+        """Clear search and reset filters."""
+        self.search_input.clear()
+        self._reset_filters()
+    
+    def _reset_filters(self):
+        """Reset all filters to default values."""
+        self.category_filter.setCurrentIndex(0)
+        self.status_filter.setCurrentIndex(0)
+        self.condition_filter.setCurrentIndex(0)
+        self.rarity_filter.setCurrentIndex(0)
+        self.price_min_input.setValue(0)
+        self.price_max_input.setValue(self.price_max_input.maximum())
+        self.featured_only.setChecked(False)
+        self._perform_search()
+    
+    def _export_csv(self):
+        """Export current filtered results to CSV."""
+        try:
+            filename, _ = QFileDialog.getSaveFileName(
+                self, "Export Catalog", "catalog_export.csv", "CSV Files (*.csv)"
+            )
+            if not filename:
+                return
+            
+            # Get current data from table
+            with open(filename, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                
+                # Write header
+                headers = [col[1] for col in self._column_definitions]
+                writer.writerow(headers)
+                
+                # Write data
+                for row in range(self.table.rowCount()):
+                    row_data = []
+                    for col in range(self.table.columnCount()):
+                        item = self.table.item(row, col)
+                        row_data.append(item.text() if item else "")
+                    writer.writerow(row_data)
+            
+            QMessageBox.information(
+                self, "Export Complete", 
+                f"Exported {self.table.rowCount()} items to {filename}"
+            )
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Export Error", f"Failed to export: {str(e)}")
 
     # --- Row/selection helpers ---
     def _selected_item_id(self):
@@ -686,6 +1023,16 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
             self._select_row_by_id(item_id)
 
     def refresh(self):
+        """Refresh data from database and update filter options."""
+        # Load fresh filter options
+        self._load_filter_options()
+        self._populate_filter_dropdowns()
+        
+        # Perform search with current criteria
+        self._refresh_with_search()
+    
+    def _refresh_with_search(self):
+        """Refresh the table using current search and filter criteria."""
         # Remember current selection and sort state
         current_id = self._selected_item_id()
         header = self.table.horizontalHeader()
@@ -696,37 +1043,46 @@ Original Headers: {getattr(header, '_original_headers', 'N/A')}"""
         else:
             current_sort_criteria = self._sort_criteria
         
-        # Load fresh data from database (now optimized - no N+1 queries)
-        self.items = self.db.get_all_items()
+        # Use enhanced search method
+        results = self.db.get_all_items_enhanced(
+            search_text=self._current_search_text if self._current_search_text else None,
+            filters=self._current_filters if self._current_filters else None
+        )
+        
+        self.items = results['items']
+        self._results_info = {
+            'total_count': results['total_count'],
+            'filtered_count': results['filtered_count']
+        }
+        
+        # Update results label
+        if self._current_search_text or self._current_filters:
+            self.results_label.setText(
+                f"Showing {self._results_info['filtered_count']} of {self._results_info['total_count']} items"
+            )
+        else:
+            self.results_label.setText(f"Showing all {self._results_info['total_count']} items")
+        
         # Fast lookup by ID for current page state
         try:
             self._items_by_id = {it['id']: it for it in self.items}
         except Exception:
             self._items_by_id = {}
         
-        # Pre-build table data in memory for efficient sorting
+        # Pre-build table data in memory for efficient sorting with all columns
         self._table_data = []
         for item in self.items:
-            # Price data is now included in the main query (no extra calls)
-            low = item.get('prc_low', 0.0)
-            med = item.get('prc_med', 0.0)
-            high = item.get('prc_hi', 0.0)
-            
-            row_data = [
-                str(item["id"]),
-                item.get("title", ""),
-                item.get("brand", ""),
-                item.get("maker", ""),
-                item.get("description", ""),
-                item.get("condition", ""),
-                item.get("provenance_notes", ""),
-                item.get("notes", ""),
-                str(low),
-                str(med),
-                str(high),
-                item.get("image_path", ""),
-                item.get("created_at", ""),
-            ]
+            row_data = []
+            for field_name, _ in self._column_definitions:
+                value = item.get(field_name, "")
+                # Handle special formatting for certain fields
+                if field_name in ['prc_low', 'prc_med', 'prc_hi', 'acquisition_cost', 'insurance_value']:
+                    value = f"{float(value):.2f}" if value and str(value) != "0.0" else ""
+                elif field_name in ['public_display', 'featured_item']:
+                    value = "Yes" if value else "No"
+                else:
+                    value = str(value) if value is not None else ""
+                row_data.append(value)
             self._table_data.append(row_data)
         
         # Apply sorting efficiently using pre-built data
