@@ -1,0 +1,24 @@
+<resources>
+    <!--
+      themes.xml — Historical Markers Tracker application theme.
+      Uses Material3 DayNight so the OS dark-mode preference is respected automatically.
+      Primary palette draws from aged-bronze and parchment tones to evoke real cast-iron markers.
+    -->
+    <style name="Theme.HistoricalMarkers" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <item name="colorPrimary">@color/color_primary</item>
+        <item name="colorPrimaryVariant">@color/color_primary_variant</item>
+        <item name="colorSecondary">@color/color_secondary</item>
+        <item name="colorSurface">@color/color_surface</item>
+        <item name="android:colorBackground">@color/color_background</item>
+        <item name="colorOnPrimary">@color/color_on_primary</item>
+        <item name="colorOnSecondary">@color/color_on_secondary</item>
+        <!-- Remove title from the default ActionBar; we use MaterialToolbar instead -->
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
+    <!-- Translucent splash / launch theme applied before main layout inflates -->
+    <style name="Theme.HistoricalMarkers.Splash" parent="Theme.HistoricalMarkers">
+        <item name="android:windowBackground">@color/color_primary</item>
+    </style>
+</resources>

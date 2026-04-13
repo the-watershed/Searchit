@@ -1,0 +1,40 @@
+<resources>
+    <!-- App name shown in the launcher and toolbar -->
+    <string name="app_name">Historical Markers</string>
+
+    <!-- Detail activity toolbar title -->
+    <string name="title_marker_detail">Marker Detail</string>
+
+    <!-- Filter chip labels -->
+    <string name="filter_all">All</string>
+    <string name="filter_visited">Visited</string>
+    <string name="filter_unvisited">Unvisited</string>
+
+    <!-- Empty-state messages shown when a filtered list is empty -->
+    <string name="empty_all">No markers found.</string>
+    <string name="empty_visited">You haven\'t visited any markers yet.\nTap a marker and press the ✔ button to record a visit!</string>
+    <string name="empty_unvisited">You\'ve visited every marker — great exploring!</string>
+
+    <!-- Location display format: "City, ST" -->
+    <string name="location_format">%1$s, %2$s</string>
+
+    <!-- GPS coordinate display format -->
+    <string name="coords_format">%.4f°, %.4f°</string>
+
+    <!-- Visit timestamp display: "Visited on Dec 4, 2024 at 3:45 PM" -->
+    <string name="visited_on">Visited on %1$s</string>
+
+    <!-- Fallback if the visit timestamp is somehow null -->
+    <string name="unknown_date">date unknown</string>
+
+    <!-- Generic "Visited" label used in list rows when timestamp unavailable -->
+    <string name="visited_label">Visited ✔</string>
+
+    <!-- FAB accessibility content description -->
+    <string name="fab_toggle_visited">Toggle visited status</string>
+
+    <!-- Options menu labels -->
+    <string name="menu_filter_all">Show All</string>
+    <string name="menu_filter_visited">Show Visited</string>
+    <string name="menu_filter_unvisited">Show Unvisited</string>
+</resources>
