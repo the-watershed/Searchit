@@ -1,0 +1,28 @@
+<resources>
+    <!--
+      colors.xml — Historical Markers Tracker color palette.
+      Primary tones are inspired by aged bronze and parchment —
+      evoking the look of real cast-iron historical marker plaques.
+    -->
+
+    <!-- Primary brand color: deep heritage blue (used in toolbar, FAB, chips) -->
+    <color name="color_primary">#1A5276</color>
+    <!-- Slightly lighter variant for AppBar / status bar -->
+    <color name="color_primary_variant">#154360</color>
+    <!-- Secondary accent: warm amber — echoes the gold lettering on markers -->
+    <color name="color_secondary">#B7950B</color>
+
+    <!-- Surface and background -->
+    <color name="color_surface">#FAFAFA</color>
+    <color name="color_background">#F0F0F0</color>
+
+    <!-- Text on primary-colored surfaces -->
+    <color name="color_on_primary">#FFFFFF</color>
+    <!-- Text on secondary-colored surfaces -->
+    <color name="color_on_secondary">#000000</color>
+
+    <!-- Visited indicator green -->
+    <color name="color_visited">#1E8449</color>
+    <!-- Unvisited / neutral grey -->
+    <color name="color_unvisited">#7F8C8D</color>
+</resources>
